@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "Liščí Dolina",
+      "hasCanvas": true,
+      "bodyTextLen": 279,
+      "bodyTextHash": "e8843d4716f581287cafa46743fe82afb691a765fa44e0a3e51055316432ff31",
+      "bodyTextPrefix": "PLOŠINOVKA Liščí Dolina Běhej, skákej a chytej mince. Dvojskok v",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "Liščí Dolina",
+      "hasCanvas": true,
+      "bodyTextLen": 279,
+      "bodyTextHash": "e8843d4716f581287cafa46743fe82afb691a765fa44e0a3e51055316432ff31",
+      "bodyTextPrefix": "PLOŠINOVKA Liščí Dolina Běhej, skákej a chytej mince. Dvojskok v",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}
