@@ -39,7 +39,7 @@ answer: stin, stín
 ## bank:mapa
 title: List v jantaru
 kind: word
-prompt: Ležím ti na kolenou, ukážu hory i řeky, a přece neudělám krok. Co jsem?
+prompt: Ležím ti na kolenou, ukážu hory i řeky, a přece neuděláme ani krok. Co jsem?
 answer: mapa, mapka
 
 ## bank:tma
@@ -70,17 +70,17 @@ options: 1, 2, 6, 11, 12
 ## bank:stin
 title: Stínový list
 kind: word
-prompt: Chodím s tebou ve dne, v noci mizím. Co jsem?
+prompt: Když je venku krásně, chodím s tebou, za bouřky a v noci ti zmizím. Kdo jsem?
 answer: stin, stín
 
 ## bank:echo
 title: Ozvěna v rokli
 kind: word
-prompt: Mluvím, až když ty dořekneš, a říkám totéž. Co jsem?
+prompt: Vždy mluvím, až po tobě a nikdy neřeknu nic, co už jsi neřekl ty. Co jsem?
 answer: ozvena, ozvěna, echo
 
 ## bank:svicka
-title: Voskový chyták
+title: Jeskyňářův chyták
 kind: word
 prompt: Čím víc jím, tím menší jsem. Co jsem?
 answer: svicka, svíčka, svice, svíce
@@ -88,7 +88,7 @@ answer: svicka, svíčka, svice, svíce
 ## bank:klic
 title: Zubaté tajemství
 kind: word
-prompt: Mám zuby a nekousnu, otvírám bez rukou. Co jsem?
+prompt: Mám zuby a nekousnu, ale bez mých zubů by ses nedostal domů. Co jsem?
 answer: klic, klíč
 
 ## bank:reka
@@ -100,7 +100,7 @@ answer: reka, řeka, potok
 ## bank:hodiny
 title: Tikající list
 kind: word
-prompt: Mám ruce a neobjímám, obličej bez očí. Co jsem?
+prompt: Mám ruce, ale neobjímám. Mám kulatý obličej, ale oči, nos, uši ani pusu na něm nehledej. Co jsem?
 answer: hodiny, hodinky, orloj
 
 ## bank:vejce
@@ -112,25 +112,25 @@ answer: vejce, vajicko, vajíčko
 ## bank:sul
 title: Mořská otázka
 kind: word
-prompt: Jsem v moři, ve slze i na stole. Co jsem?
+prompt: Jsem v moři, v slze i na jídelním stole. Co jsem?
 answer: sul, sůl
 
 ## bank:vitr
 title: Šumící list
 kind: word
-prompt: Slyšíš mě, nevidíš mě, stromy se přede mnou klaní. Co jsem?
+prompt: Často mě slyšíš, nikdy nevidíš a rostliny se přede mnou klaní. Co jsem?
 answer: vitr, vítr
 
 ## bank:zrcadlo
 title: Stříbrný chyták
 kind: word
-prompt: Vidíš v něm sebe, ale ono tě nevidí. Co je to?
+prompt: Ono tě nevidí. Když se na něj podíváš ty, uvidíš jen sebe. Co je to?
 answer: zrcadlo
 
 ## bank:hreben
-title: Zubaté tajemství hřebene
+title: Zubatý kamarád 
 kind: word
-prompt: Mám zuby v řadě, a přece nic nesním. Vlasy učešu. Co jsem?
+prompt: Mám zuby v řadě, a přece nic nesním. Když se přátelíme, udělám tě krásnějším. Co jsem?
 answer: hreben, hřeben
 
 ## bank:most
