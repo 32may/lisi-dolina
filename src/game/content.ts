@@ -26,6 +26,19 @@ export const THEME_TINT: Record<string, string> = {
   slava: "rgba(196, 150, 64, 0.14)",
 };
 
+export const HALL_LAYOUT = {
+  width: 3600,
+  cx: 3000,
+  mayX: 2884,
+  miaX: 3116,
+  plaqueX: 2636,
+  plaqueW: 728,
+  plaqueY: 4,
+  daisX: 2680,
+  introCamX: 2360,
+  foxX: 2760,
+};
+
 function solid(x: number, y: number, w: number, h: number): Platform {
   return { x, y, w, h, kind: "solid" };
 }
@@ -103,10 +116,7 @@ export const SECRET_LEVELS: LevelDef[] = [
     themeKey: "jiskra",
     secret: true,
     spawn: { x: 70, y: 572 },
-    platforms: [
-      ground(0, 3200, 600),
-      solid(0, 0, 3200, 568),
-    ],
+    platforms: [ground(0, 3200, 600), solid(0, 0, 3200, 568)],
     movers: [],
     coins: [
       { x: 240, y: 580 },
@@ -242,7 +252,7 @@ export const SECRET_LEVELS: LevelDef[] = [
     id: 14,
     name: "Jeskyně slávy",
     blurb: "May a Mia čekají.",
-    width: 2200,
+    width: HALL_LAYOUT.width,
     height: 720,
     theme: "cave",
     themeKey: "slava",
@@ -250,23 +260,36 @@ export const SECRET_LEVELS: LevelDef[] = [
     hall: true,
     spawn: { x: 70, y: 500 },
     platforms: [
-      ground(0, 2200, 600),
-      solid(1280, 548, 640, 56),
-      solid(1368, 500, 464, 52),
+      ground(0, 360, 600),
+      solid(360, 0, 420, 568),
+      ground(360, 420, 600),
+      ground(780, 220, 600),
+      ground(1000, 420, 600),
+      ground(1420, 80, 600),
+      ground(1780, 200, 600),
+      ground(2020, HALL_LAYOUT.width - 2020, 600),
+      solid(HALL_LAYOUT.daisX, 548, 640, 56),
+      solid(HALL_LAYOUT.daisX + 88, 500, 464, 52),
     ],
     movers: [],
     coins: [
-      { x: 400, y: 564 },
-      { x: 700, y: 564 },
-      { x: 1000, y: 564 },
+      { x: 240, y: 564 },
+      { x: 560, y: 580 },
+      { x: 1180, y: 564 },
     ],
-    spikes: [],
-    checkpoints: [lantern(600, 600)],
+    spikes: [{ x: 1500, y: 668, w: 280, h: 52 }],
+    checkpoints: [lantern(800, 600), lantern(1400, 600), lantern(1820, 600), lantern(2140, 600)],
     flag: { x: -500, y: 600 },
     guards: [],
+    darts: [
+      dart(1080, 520, 1020, 1380, "x", 150, 0),
+      dart(1200, 500, 1020, 1380, "x", 140, 400),
+    ],
+    doors: [{ x: 1980, y: 500, keyId: "hall-gate" }],
+    riddles: [{ x: 2260, y: 560, id: "hall-note" }],
     npcs: [
-      { x: 1484, y: 518, who: "may" },
-      { x: 1716, y: 518, who: "mia" },
+      { x: HALL_LAYOUT.mayX, y: 518, who: "may" },
+      { x: HALL_LAYOUT.miaX, y: 518, who: "mia" },
     ],
   },
 ];

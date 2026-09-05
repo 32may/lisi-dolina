@@ -1,4 +1,4 @@
-import type { CharacterId } from "./characters";
+import type { CharacterId } from "./characters.ts";
 
 export type Overlay =
   | "title"
@@ -123,6 +123,9 @@ export interface LegitSnap {
   levers: boolean[];
   openedDoors: string[];
   purse: number;
+  score: number;
+  collectedCoins: Record<string, string[]>;
+  claimedEvents: string[];
 }
 
 export interface LegendEntry {
@@ -168,6 +171,13 @@ export interface HudState {
   banner: string | null;
   cheated: boolean;
   legit: LegitSnap | null;
+  score: number;
+  levelDeaths: number;
+  collectedCoins: Record<string, string[]>;
+  claimedEvents: string[];
+  runId: string;
+  completionId: string | null;
+  bannerUntil: number;
 }
 
 declare global {

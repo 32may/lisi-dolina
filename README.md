@@ -10,7 +10,10 @@
 - **W / ↑** skok
 - **Mezerník** speciální schopnost
 - **R** od začátku, **Esc** pauza
+- U lucerny mezerník vymění hrdinu
 
-Začínáš s liškou. Mince z úrovní jdou do měšce a v obchodu po vlajce kupuješ další postavy.
+Začínáš s liškou. Mince jdou do měšce hned po sběru. Obchod po vlajce prodává další postavy.
 
-Verze 2.0.
+Hádanky se berou z [`hadanky.md`](hadanky.md). Testovací kódy jsou v [`kody.md`](kody.md). Sazby bodů v `src/game/progress.ts`.
+
+Verze 2.2. Save `lisi-dolina-v4`. Deska legend je sdílená (SQL), ne localStorage.

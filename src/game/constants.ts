@@ -35,7 +35,11 @@ export const FLY_MAX = 420;
 export const HARD_LAND = 520;
 export const MAIN_LEVELS = 9;
 export const NAME_MAX = 12;
-export const SAVE_KEY = "lisi-dolina-v3";
+export const SAVE_KEY = "lisi-dolina-v4";
+export const SAVE_KEY_V3 = "lisi-dolina-v3";
+export const SAVE_VERSION = 4;
+export const BANNER_MS = 5000;
+export const SECRET_BANNER = "Tajný level otevřen";
 
 export const SHEET = {
   cols: 2,

@@ -1,7 +1,7 @@
 import { loadAssets, type Assets } from "./assets";
 import { GameAudio } from "./audio";
 import { CHAR_BY_ID, isCharacterId, type CharacterDef, type CharacterId } from "./characters";
-import { findLevel, LEVEL_EXTRAS, THEME_KEYS, THEME_TINT } from "./content";
+import { findLevel, HALL_LAYOUT, LEVEL_EXTRAS, THEME_KEYS, THEME_TINT } from "./content";
 import {
   APEX_GRAVITY,
   APEX_THRESHOLD,
@@ -31,7 +31,9 @@ import { Input, type Actions } from "./input";
 import { LEVELS } from "./levels";
 import { formatLegend, HALL_LINES, layoutLegendSlots, runTotals } from "./legend";
 import { addLegend, listLegends } from "./legend.functions";
+import { coinId, SCORE } from "./progress";
 import { RIDDLE_BY_ID } from "./riddles";
+import { canEnterLevel, canOpenDoor, canReadFinalRiddle, doorVisible as doorIsVisible } from "./rules";
 import { useHud } from "./store";
 import type {
   DartDef,
@@ -82,6 +84,10 @@ interface Player {
   carryT: number;
   flyHurt: boolean;
   airFragile: boolean;
+  usedDouble: boolean;
+  carryTx: number;
+  carryTy: number;
+  prevBottom: number;
 }
 
 interface OriginSnap {
@@ -90,8 +96,9 @@ interface OriginSnap {
   y: number;
   spawnX: number;
   spawnY: number;
-  coins: boolean[];
   lanterns: boolean[];
+  deaths: number;
+  character: CharacterId;
 }
 
 interface Companion {
@@ -134,7 +141,7 @@ export class Game {
   overlay: Overlay = "title";
   level!: LevelDef;
   movers: Mover[] = [];
-  coins: { x: number; y: number; taken: boolean }[] = [];
+  coins: { x: number; y: number; taken: boolean; id: string }[] = [];
   checkpoints: { x: number; y: number; lit: boolean }[] = [];
   guards: Guard[] = [];
   darts: DartLive[] = [];
@@ -169,6 +176,14 @@ export class Game {
   clapPlayed = false;
   lastSignedName: string | null = null;
   playerTarget: { x: number; y: number } | null = null;
+  consume = 0;
+  lastHudOverlay: Overlay | null = null;
+  hallGate = false;
+  hallNote = false;
+  hallLeftDais = true;
+  introLock = false;
+  pendingFame: string | null = null;
+  passedGuards = new Set<number>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -218,19 +233,24 @@ export class Game {
 
   play(levelId: number) {
     this.audio.unlock();
-    this.applyCharacter(useHud.getState().character);
+    const hud = useHud.getState();
+    if (!canEnterLevel(hud, levelId) && !hud.cheated) return;
+    this.applyCharacter(hud.character);
     const def = findLevel(levelId, LEVELS);
     if (!def.secret && !def.hall) this.originSnap = null;
+    if (!def.secret) hud.resetLevelDeaths();
     this.loadLevel(levelId, true);
-    this.overlay = "playing";
+    this.setPlayOverlay("playing");
     this.syncHud();
   }
 
   requestPlay(levelId: number) {
     this.audio.unlock();
+    const hud = useHud.getState();
+    if (!canEnterLevel(hud, levelId) && !hud.cheated) return;
     this.pickMode = "play";
-    useHud.getState().patch({ pendingLevel: levelId, overlay: "pick", pickMode: "play" });
-    this.overlay = "pick";
+    hud.patch({ pendingLevel: levelId, overlay: "pick", pickMode: "play" });
+    this.setPlayOverlay("pick");
     this.syncHud();
   }
 
@@ -287,14 +307,14 @@ export class Game {
     if (!useHud.getState().solveRiddle(id, answer)) return false;
     this.audio.key();
     this.burst(this.player.x + this.pw / 2, this.player.y, 18, "#f0c35a");
-    this.overlay = "playing";
+    this.setPlayOverlay("playing");
     useHud.getState().patch({ riddleId: null });
     this.syncHud();
     return true;
   }
 
   closeRiddle() {
-    this.overlay = "playing";
+    this.setPlayOverlay("playing");
     useHud.getState().patch({ riddleId: null });
     this.syncHud();
   }
@@ -307,26 +327,24 @@ export class Game {
     }
     const n = name.trim().slice(0, 12);
     if (!n) return;
+    this.pendingFame = n;
     const { score, coins } = runTotals(hud);
     const cheated = hud.cheated;
-    hud.signLegend(n, score, coins);
-    this.lastSignedName = n;
-    this.audio.win();
-    this.burst(1590, 180, 22, "#e8d6b4");
-    this.closeHall();
-    void addLegend({ data: { name: n, score: cheated ? 0 : score, coins: cheated ? 0 : coins, cheater: cheated } })
+    const runId = hud.completionId ?? hud.runId;
+    hud.patch({ completionId: runId });
+    void addLegend({
+      data: { name: n, score: cheated ? 0 : score, coins: cheated ? 0 : coins, cheater: cheated, runId },
+    })
       .then((rows) => {
-        const cur = useHud.getState().legends;
-        const seen = new Set(rows.map((r) => `${r.name}|${r.score}|${r.coins}|${r.cheater ? 1 : 0}`));
-        const merged = [...rows];
-        for (const e of cur) {
-          const k = `${e.name}|${e.score}|${e.coins}|${e.cheater ? 1 : 0}`;
-          if (!seen.has(k)) merged.push(e);
-        }
-        useHud.getState().patch({ legends: merged });
+        hud.signLegend(n, score, coins);
+        this.lastSignedName = n;
+        this.audio.win();
+        this.burst(HALL_LAYOUT.cx, 180, 22, "#e8d6b4");
+        useHud.getState().patch({ legends: rows });
+        this.closeHall();
       })
       .catch(() => {
-        /* local copy already on the plaque */
+        useHud.getState().patch({ banner: "Zápis se nepodařil. Zkus to znovu." });
       });
   }
 
@@ -337,29 +355,37 @@ export class Game {
     this.hallPhase = "done";
     this.ceremonyLock = false;
     this.ceremonyTalked = true;
+    this.hallLeftDais = false;
     this.syncHud();
   }
 
   beginIntro() {
     this.loadLevel(14, true);
     this.overlay = "intro";
-    this.camX = 1180;
+    this.introLock = true;
+    this.camX = HALL_LAYOUT.introCamX;
     this.camY = 0;
     this.syncHud();
   }
 
   dismissIntro() {
+    this.introLock = false;
     useHud.getState().markIntroSeen();
     this.goMenu("title");
   }
 
-  advanceEpilogue() {
-    useHud.getState().patch({ epilogueStep: useHud.getState().epilogueStep + 1 });
+  newGame() {
+    this.godMode = false;
+    useHud.getState().newGame();
+    this.beginIntro();
   }
 
   endCompletedGame() {
-    useHud.getState().newGame();
-    this.beginIntro();
+    this.newGame();
+  }
+
+  advanceEpilogue() {
+    useHud.getState().patch({ epilogueStep: useHud.getState().epilogueStep + 1 });
   }
 
   seekCreatorsCave() {
@@ -372,11 +398,13 @@ export class Game {
     const raw = code.trim().toUpperCase();
     if (raw === "IDDQD") {
       this.godMode = !this.godMode;
+      hud.markCheated();
       hud.patch({ banner: this.godMode ? "Nesmrtelnost" : "Smrtelnost zpět" });
       this.audio.key();
       return;
     }
     if (raw === "DOOM") {
+      hud.markCheated();
       for (const g of this.guards) {
         g.dead = true;
         g.squish = 0.22;
@@ -401,17 +429,7 @@ export class Game {
       hud.mayOff();
       const s = useHud.getState();
       this.applyCharacter(s.character);
-      const inHall = Boolean(this.level.hall);
-      const hallLocked = inHall && !s.solved.includes("alencina") && !s.openedDoors.includes("hall");
-      const secret = Object.values(RIDDLE_BY_ID).find((r) => r.secretLevel === this.level.id);
-      const bonusLocked =
-        Boolean(this.level.secret) &&
-        !inHall &&
-        !!secret &&
-        !s.keys.includes(secret.id) &&
-        !s.openedDoors.includes(secret.id);
-      const lockedMain = !this.level.secret && !inHall && this.level.id >= s.unlocked;
-      if (hallLocked || bonusLocked || lockedMain) this.goMenu("title");
+      if (!canEnterLevel(s, this.level.id)) this.goMenu("title");
       this.audio.key();
     }
   }
@@ -424,7 +442,11 @@ export class Game {
     const def = findLevel(id, LEVELS);
     this.level = def;
     this.movers = def.movers.map((m) => ({ ...m, t: 0 }));
-    this.coins = def.coins.map((c) => ({ ...c, taken: false }));
+    this.coins = def.coins.map((c, i) => {
+      const id = coinId(def.id, i);
+      const taken = (useHud.getState().collectedCoins[String(def.id)] ?? []).includes(id);
+      return { ...c, id, taken };
+    });
     this.checkpoints = def.checkpoints.map((c) => ({ ...c, lit: false }));
     this.guards = def.guards.map((g) => ({
       ...g,
@@ -449,6 +471,10 @@ export class Game {
     this.playerTarget = null;
     this.talkIndex = 0;
     this.talkTimer = 0;
+    this.hallGate = false;
+    this.hallNote = false;
+    this.passedGuards = new Set();
+    this.introLock = this.overlay === "intro";
     if (def.hall) {
       const owned = useHud.getState().owned;
       const current = useHud.getState().character;
@@ -493,10 +519,14 @@ export class Game {
         carryT: 0,
         flyHurt: false,
         airFragile: false,
+        usedDouble: false,
+        carryTx: 0,
+        carryTy: 0,
+        prevBottom: def.spawn.y + this.stats.h,
       };
-      this.camX = Math.max(0, def.spawn.x - VIEW_W * 0.35);
+      if (!this.introLock) this.camX = Math.max(0, def.spawn.x - VIEW_W * 0.35);
       this.camY = 0;
-      this.deaths = 0;
+      if (!this.level.secret) this.deaths = 0;
     }
   }
 
@@ -523,9 +553,17 @@ export class Game {
     const actions = this.input.sample();
     const cheat = this.input.sampleCheat();
     if (cheat) this.applyCheat(cheat);
+    if (this.consume > 0) {
+      this.consume = Math.max(0, this.consume - dt);
+      actions.jumpPressed = false;
+      actions.abilityPressed = false;
+      actions.confirm = false;
+      actions.jump = false;
+      actions.ability = false;
+    }
     if (this.overlay === "playing") {
       if (actions.pause) {
-        this.overlay = "paused";
+        this.setPlayOverlay("paused");
         this.syncHud();
         return;
       }
@@ -539,13 +577,14 @@ export class Game {
       this.tickDeath(dt, actions);
     } else {
       this.animateWorld(dt);
-      if (this.overlay === "hall" || this.overlay === "intro") this.updateCamera(dt);
-      if (this.overlay === "paused" && (actions.pause || actions.confirm)) {
-        this.overlay = "playing";
-        this.syncHud();
+      if ((this.overlay === "hall" || this.overlay === "intro") && !this.introLock) this.updateCamera(dt);
+      if (this.overlay === "intro" && this.introLock) {
+        this.camX = HALL_LAYOUT.introCamX;
+        this.camY = 0;
       }
-      if (this.overlay === "shop" && actions.confirm) {
-        this.leaveShop();
+      if (this.overlay === "paused" && (actions.pause || actions.confirm)) {
+        this.setPlayOverlay("playing");
+        this.syncHud();
       }
     }
     this.updateParticles(dt);
@@ -636,6 +675,9 @@ export class Game {
     }
 
     this.animateWorld(dt);
+    p.curled = st.ability === "curl" && actions.ability;
+    p.flying = st.ability === "fly" && actions.ability;
+    if (p.flying) p.airFragile = true;
     this.tickDarts(dt);
     this.doorCool = Math.max(0, this.doorCool - dt);
     const ride = p.riding;
@@ -646,10 +688,6 @@ export class Game {
       p.y += ride.y - prevY;
     }
     p.riding = null;
-
-    p.curled = st.ability === "curl" && actions.ability;
-    p.flying = st.ability === "fly" && actions.ability;
-    if (p.flying) p.airFragile = true;
 
     if (actions.abilityPressed) this.useAbility();
 
@@ -708,6 +746,8 @@ export class Game {
 
     const wasGrounded = p.grounded;
     const fallSpeed = p.vy;
+    const startX = p.x;
+    p.prevBottom = p.y + this.ph;
     p.grounded = false;
     const steps = Math.max(1, Math.ceil((Math.abs(p.vx) + Math.abs(p.vy)) * dt / 10));
     const sdt = dt / steps;
@@ -729,6 +769,8 @@ export class Game {
       this.audio.land();
       this.burst(p.x + this.pw / 2, p.y + this.ph, 6, "#d4c4a8");
       p.squash = 0.78;
+      this.awardCrossing(startX, p.x, p.usedDouble);
+      p.usedDouble = false;
     }
     if (p.flyHurt && p.airFragile) {
       this.kill();
@@ -764,6 +806,7 @@ export class Game {
     p.squash = 1.18;
     if (isDouble) {
       p.jumpsLeft -= 1;
+      p.usedDouble = true;
       this.audio.doubleJump();
       this.burst(p.x + this.pw / 2, p.y + this.ph, 8, "#efe8dc");
     } else {
@@ -776,15 +819,27 @@ export class Game {
     const p = this.player;
     const st = this.stats;
     const hit = { x: p.x - 20, y: p.y - 12, w: this.pw + 40, h: this.ph + 24 };
+    if (this.tryLanternSwap(hit, st.ability)) return;
     if (st.ability === "riddle") {
       const paper = this.riddles.find((r) => aabb(hit, { x: r.x - 28, y: r.y - 36, w: 56, h: 56 }));
       if (!paper) return;
+      if (paper.id === "hall-note") {
+        this.hallNote = true;
+        this.audio.key();
+        this.burst(paper.x, paper.y, 12, "#f0c35a");
+        useHud.getState().patch({ hint: "Cesta k trůnům je volná" });
+        return;
+      }
+      if (paper.id === "alencina" && !canReadFinalRiddle(useHud.getState())) {
+        useHud.getState().patch({ hint: "Nejdřív pět pák z bonusů" });
+        return;
+      }
       if (useHud.getState().solved.includes(paper.id)) {
         useHud.getState().patch({ hint: "Už vyřešeno" });
         return;
       }
       this.audio.riddle();
-      this.overlay = "riddle";
+      this.setPlayOverlay("riddle");
       useHud.getState().patch({ riddleId: paper.id, overlay: "riddle" });
       this.syncHud();
       return;
@@ -792,6 +847,12 @@ export class Game {
     if (st.ability === "door") {
       const door = this.doors.find((d) => aabb(hit, { x: d.x - 24, y: d.y - 90, w: 72, h: 110 }));
       if (!door) return;
+      if (door.keyId === "hall-gate") {
+        this.hallGate = true;
+        this.audio.door();
+        useHud.getState().patch({ hint: "Brána se otevřela" });
+        return;
+      }
       if (!this.doorReady(door)) {
         useHud.getState().patch({
           hint: door.keyId === "hall" ? "Nejprve Alenčina hádanka" : "Chybí klíč",
@@ -799,12 +860,8 @@ export class Game {
         return;
       }
       const hud = useHud.getState();
-      if (door.keyId === "hall" && hud.owned.length < 5) {
+      if (door.keyId === "hall" && hud.owned.length < 5 && !hud.cheated) {
         useHud.getState().patch({ hint: "Potřebujete všechny postavy" });
-        return;
-      }
-      if (door.keyId === "hall" && !hud.solved.includes("alencina")) {
-        useHud.getState().patch({ hint: "Nejprve Alenčina hádanka" });
         return;
       }
       this.audio.door();
@@ -819,16 +876,31 @@ export class Game {
     }
   }
 
+  private tryLanternSwap(hit: Rect, ability: string) {
+    const at = this.checkpoints.find((cp) => cp.lit && aabb(hit, { x: cp.x - 48, y: cp.y - 120, w: 96, h: 124 }));
+    if (!at) return false;
+    if (ability === "riddle" && this.riddles.some((r) => aabb(hit, { x: r.x - 28, y: r.y - 36, w: 56, h: 56 }))) {
+      return false;
+    }
+    if (ability === "door" && this.doors.some((d) => this.doorVisible(d) && aabb(hit, { x: d.x - 24, y: d.y - 90, w: 72, h: 110 }))) {
+      return false;
+    }
+    this.player.spawnX = at.x - this.pw / 2;
+    this.player.spawnY = at.y - this.ph - 2;
+    this.pickMode = "lantern";
+    this.setPlayOverlay("pick");
+    useHud.getState().patch({ overlay: "pick", pickMode: "lantern" });
+    this.syncHud();
+    return true;
+  }
+
   private doorReady(door: DoorSpot) {
-    const hud = useHud.getState();
-    if (door.keyId === "hall") return hud.solved.includes("alencina");
-    return hud.keys.includes(door.keyId);
+    return canOpenDoor(useHud.getState(), door.keyId, true);
   }
 
   private doorVisible(door: DoorSpot) {
-    const hud = useHud.getState();
-    if (door.keyId === "hall") return hud.solved.includes("alencina") || hud.openedDoors.includes("hall");
-    return hud.keys.includes(door.keyId) || hud.openedDoors.includes(door.keyId);
+    if (door.keyId === "hall-gate") return !this.hallGate;
+    return doorIsVisible(useHud.getState(), door.keyId);
   }
 
   private enterSecret(secretId: number) {
@@ -840,12 +912,14 @@ export class Game {
       y: p.y,
       spawnX: p.spawnX,
       spawnY: p.spawnY,
-      coins: this.coins.map((c) => c.taken),
       lanterns: this.checkpoints.map((c) => c.lit),
+      deaths: useHud.getState().levelDeaths,
+      character: useHud.getState().character,
     };
     this.pickMode = "play";
+    useHud.getState().resetLevelDeaths();
     useHud.getState().patch({ pendingLevel: secretId, overlay: "pick", pickMode: "play" });
-    this.overlay = "pick";
+    this.setPlayOverlay("pick");
     this.syncHud();
   }
 
@@ -866,9 +940,10 @@ export class Game {
     p.vy = 0;
     p.invuln = 0.8;
     this.doorCool = 1.6;
-    for (let i = 0; i < this.coins.length; i++) this.coins[i].taken = Boolean(snap.coins[i]);
     for (let i = 0; i < this.checkpoints.length; i++) this.checkpoints[i].lit = Boolean(snap.lanterns[i]);
-    this.overlay = "playing";
+    useHud.getState().patch({ levelDeaths: snap.deaths, deaths: snap.deaths });
+    this.deaths = snap.deaths;
+    this.setPlayOverlay("playing");
     this.syncHud();
   }
 
@@ -887,6 +962,11 @@ export class Game {
     p.carryT = 0;
     p.vx = 0;
     p.vy = 0;
+    const ahead = this.checkpoints
+      .filter((c) => c.x > p.x + 40)
+      .sort((a, b) => a.x - b.x)[0];
+    p.carryTx = ahead ? ahead.x : this.level.flag.x - 80;
+    p.carryTy = ahead ? ahead.y - this.ph - 2 : this.level.flag.y - this.ph - 2;
     this.audio.ability();
     this.burst(p.x + this.pw / 2, p.y, 14, "#e07090");
   }
@@ -898,11 +978,8 @@ export class Game {
     if (Math.floor(p.carryT * 8) !== Math.floor((p.carryT - dt) * 8)) {
       this.burst(p.x + this.pw / 2, p.y - 10, 2, "#e07090");
     }
-    const ahead = this.checkpoints
-      .filter((c) => c.x > p.x + 40)
-      .sort((a, b) => a.x - b.x)[0];
-    const targetX = ahead ? ahead.x : this.level.flag.x - 80;
-    const targetY = ahead ? ahead.y - this.ph - 2 : this.level.flag.y - this.ph - 2;
+    const targetX = p.carryTx;
+    const targetY = p.carryTy;
     const speed = 180;
     const dx = targetX - (p.x + this.pw / 2);
     if (Math.abs(dx) < 18) {
@@ -914,11 +991,13 @@ export class Game {
         g.carrying = false;
         g.x = Math.max(g.minX, Math.min(g.maxX - g.w, p.x + 50));
       }
+      const ahead = this.checkpoints.find((c) => Math.abs(c.x - targetX) < 24);
       if (ahead && !ahead.lit) {
         ahead.lit = true;
         p.spawnX = ahead.x - this.pw / 2;
         p.spawnY = ahead.y - this.ph - 2;
         this.audio.checkpoint();
+        useHud.getState().claimEvent(`${this.level.id}:cp:${this.checkpoints.indexOf(ahead)}`, SCORE.checkpoint);
       }
       this.syncHud();
       return;
@@ -957,7 +1036,18 @@ export class Game {
   }
 
   private solids(): (Platform | Mover)[] {
-    return [...this.level.platforms, ...this.movers];
+    return [...this.level.platforms, ...this.movers, ...this.gateWalls()];
+  }
+
+  private gateWalls(): Platform[] {
+    const walls: Platform[] = [];
+    if (this.level.hall && !this.hallGate) {
+      walls.push({ x: 1960, y: 400, w: 48, h: 220, kind: "solid" });
+    }
+    if (this.level.hall && !this.hallNote) {
+      walls.push({ x: 2480, y: 400, w: 48, h: 220, kind: "solid" });
+    }
+    return walls;
   }
 
   private collideAxis(axis: "x" | "y"): boolean {
@@ -1005,6 +1095,7 @@ export class Game {
       const coin = { x: c.x - COIN_R, y: c.y - COIN_R, w: COIN_R * 2, h: COIN_R * 2 };
       if (aabb(hit, coin)) {
         c.taken = true;
+        useHud.getState().collectCoin(this.level.id, c.id);
         this.audio.coin();
         this.burst(c.x, c.y, 10, "#f0c35a");
         this.syncHud();
@@ -1018,7 +1109,13 @@ export class Game {
         p.spawnY = cp.y - this.ph - 2;
         this.audio.checkpoint();
         this.burst(cp.x, cp.y - 40, 12, "#f0c35a");
+        useHud.getState().claimEvent(
+          `${this.level.id}:cp:${this.checkpoints.indexOf(cp)}`,
+          SCORE.checkpoint,
+        );
         this.syncHud();
+      } else if (cp.lit && aabb(hit, box)) {
+        useHud.getState().patch({ hint: "Mezerník: vyměnit hrdinu" });
       }
     }
     const f = this.level.flag;
@@ -1029,12 +1126,13 @@ export class Game {
         this.audio.flag();
         const coins = this.coins.filter((c) => c.taken).length;
         useHud.getState().recordWin(this.level.id, coins);
+        useHud.getState().claimEvent(`${this.level.id}:flag`, SCORE.flag);
         this.burst(f.x, f.y - 50, 24, "#d4c4a8");
         if (this.level.id === MAIN_LEVELS - 1 && !this.level.secret) {
-          this.overlay = "epilogue";
+          this.setPlayOverlay("epilogue");
           useHud.getState().patch({ overlay: "epilogue", epilogueStep: 0, unlocked: MAIN_LEVELS });
         } else {
-          this.overlay = "shop";
+          this.setPlayOverlay("shop");
         }
         this.syncHud();
         return;
@@ -1110,13 +1208,15 @@ export class Game {
         g.squish = 0.4;
         this.audio.stomp();
         this.burst(g.x + g.w / 2, g.y, 12, "#c4b49a");
+        this.killGuardScore(g, true);
         continue;
       }
       if (this.stats.ability === "charm") {
         this.startCarry(g);
         return;
       }
-      if (p.vy > 80) {
+      const fromAbove = p.vy > 80 && p.prevBottom <= g.y + 12;
+      if (fromAbove) {
         g.dead = true;
         g.squish = 0.4;
         p.vy = this.stats.jumpVel * 0.62 || -420;
@@ -1124,12 +1224,14 @@ export class Game {
         p.jumpsLeft = Math.max(p.jumpsLeft, 1);
         this.audio.stomp();
         this.burst(g.x + g.w / 2, g.y, 12, "#c4b49a");
+        this.killGuardScore(g, true);
         continue;
       }
       if (p.invuln > 0) continue;
       this.kill();
       return;
     }
+    this.noteGuardPasses();
   }
 
   private kill() {
@@ -1139,16 +1241,20 @@ export class Game {
     p.deadTimer = 1.15;
     p.vy = -280;
     p.vx *= 0.3;
+    p.carried = false;
     this.deaths += 1;
     useHud.getState().addDeath();
     this.trauma = Math.min(1, this.trauma + 0.55);
     this.audio.die();
     this.burst(p.x + this.pw / 2, p.y + this.ph / 2, 16, "#c45c4a");
-    this.overlay = "dead";
+    this.setPlayOverlay("dead");
     this.syncHud();
   }
 
   private afterDeath() {
+    this.input.setTouch("clear", false);
+    this.input.keys.clear();
+    this.consume = 0.25;
     if (useHud.getState().owned.length > 1) {
       this.pickMode = "lantern";
       this.player.deadTimer = 0;
@@ -1156,7 +1262,7 @@ export class Game {
       this.player.y = this.player.spawnY;
       this.player.vx = 0;
       this.player.vy = 0;
-      this.overlay = "pick";
+      this.setPlayOverlay("pick");
       useHud.getState().patch({ pickMode: "lantern" });
       this.syncHud();
       return;
@@ -1180,6 +1286,9 @@ export class Game {
     p.carried = false;
     p.airFragile = false;
     p.flyHurt = false;
+    p.usedDouble = false;
+    p.carryTx = 0;
+    p.carryTy = 0;
     const box = { x: p.x, y: p.y, w: this.pw, h: this.ph };
     for (const g of this.guards) {
       if (!g.dead && aabb(box, g)) {
@@ -1187,8 +1296,52 @@ export class Game {
         g.dir = 1;
       }
     }
-    this.overlay = "playing";
+    this.setPlayOverlay("playing");
     this.syncHud();
+  }
+
+  private setPlayOverlay(next: Overlay) {
+    if (this.overlay !== next) {
+      this.input.setTouch("clear", false);
+      this.input.keys.clear();
+      this.consume = 0.22;
+    }
+    this.overlay = next;
+  }
+
+  private awardCrossing(fromX: number, toX: number, usedDouble: boolean) {
+    const hud = useHud.getState();
+    const left = Math.min(fromX, toX);
+    const right = Math.max(fromX, toX);
+    this.level.spikes.forEach((s, i) => {
+      if (left <= s.x && right >= s.x + s.w) {
+        hud.claimEvent(`${this.level.id}:hz:${i}`, SCORE.hazard);
+        if (usedDouble && s.w > 180) hud.claimEvent(`${this.level.id}:dj:${i}`, SCORE.doubleJump);
+      }
+    });
+  }
+
+  private killGuardScore(g: Guard, killed: boolean) {
+    const i = this.guards.indexOf(g);
+    const hud = useHud.getState();
+    if (killed) {
+      hud.claimEvent(`${this.level.id}:gk:${i}`, SCORE.guardKill);
+      hud.claimEvent(`${this.level.id}:gp:${i}`, 0);
+      this.passedGuards.add(i);
+    }
+  }
+
+  private noteGuardPasses() {
+    const p = this.player;
+    const hud = useHud.getState();
+    this.guards.forEach((g, i) => {
+      if (g.dead || this.passedGuards.has(i)) return;
+      if (p.x > g.maxX + 20) {
+        this.passedGuards.add(i);
+        hud.claimEvent(`${this.level.id}:gp:${i}`, SCORE.guardPass);
+        hud.claimEvent(`${this.level.id}:gk:${i}`, 0);
+      }
+    });
   }
 
   restartLevel() {
@@ -1196,7 +1349,8 @@ export class Game {
   }
 
   goMenu(next: Overlay = "title") {
-    this.overlay = next === "levels" || next === "pick" || next === "shop" ? next : "title";
+    this.introLock = false;
+    this.setPlayOverlay(next === "levels" || next === "pick" || next === "shop" ? next : "title");
     this.originSnap = null;
     this.loadLevel(0, true);
     this.syncHud();
@@ -1210,6 +1364,11 @@ export class Game {
   }
 
   private updateCamera(dt: number) {
+    if (this.introLock || this.overlay === "intro") {
+      this.camX = HALL_LAYOUT.introCamX;
+      this.camY = 0;
+      return;
+    }
     const p = this.player;
     const targetLook = p.facing * 90 + p.vx * 0.18;
     this.lookX += (targetLook - this.lookX) * (1 - Math.exp(-4 * dt));
@@ -1251,8 +1410,22 @@ export class Game {
 
   private syncHud() {
     const coins = this.coins.filter((c) => c.taken).length;
-    this.input.blocked =
-      this.overlay === "riddle" || this.overlay === "hall" || this.overlay === "intro" || this.overlay === "epilogue";
+    const blocked =
+      this.overlay === "riddle" ||
+      this.overlay === "hall" ||
+      this.overlay === "intro" ||
+      this.overlay === "epilogue" ||
+      this.overlay === "pick" ||
+      this.overlay === "shop" ||
+      this.overlay === "dead" ||
+      this.overlay === "title" ||
+      this.overlay === "levels";
+    this.input.blocked = blocked;
+    if (this.lastHudOverlay !== this.overlay) {
+      this.lastHudOverlay = this.overlay;
+      this.input.setTouch("clear", false);
+      this.consume = Math.max(this.consume, 0.18);
+    }
     useHud.getState().patch({
       overlay: this.overlay,
       coins,
@@ -1329,9 +1502,11 @@ export class Game {
     extra.lightLantern = () => {
       const cp = this.checkpoints[0];
       if (!cp) return;
+      const was = cp.lit;
       cp.lit = true;
       this.player.spawnX = cp.x - this.pw / 2;
       this.player.spawnY = cp.y - this.ph - 2;
+      if (!was) useHud.getState().claimEvent(`${this.level.id}:cp:0`, SCORE.checkpoint);
       this.syncHud();
     };
     extra.dieNow = () => this.kill();
@@ -1383,6 +1558,13 @@ export class Game {
         cheated: s.cheated,
         unlocked: s.unlocked,
         purse: s.purse,
+        score: s.score,
+        collectedCoins: s.collectedCoins,
+        claimedEvents: s.claimedEvents,
+        runId: s.runId,
+        levelDeaths: s.levelDeaths,
+        camX: Math.round(this.camX),
+        introLock: this.introLock,
         riddleRoll: s.riddleRoll,
         legends: s.legends.map((e) => e.name),
         companions: this.companions.map((c) => ({ id: c.id, x: Math.round(c.x), y: Math.round(c.y) })),
@@ -1431,8 +1613,18 @@ export class Game {
       const img = L.img;
       const h = VIEW_H;
       const w = (img.width / img.height) * h;
-      const x = -((this.camX * L.f) % w);
-      for (let i = -1; i < 3; i++) ctx.drawImage(img, x + i * w, 0, w, h);
+      const x = -((this.camX * L.f) % (w * 2));
+      for (let i = -1; i < 4; i++) {
+        const dx = x + i * w;
+        if (i % 2 === 0) ctx.drawImage(img, dx, 0, w, h);
+        else {
+          ctx.save();
+          ctx.translate(dx + w, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(img, 0, 0, w, h);
+          ctx.restore();
+        }
+      }
     }
     ctx.globalAlpha = 1;
     const tint = THEME_TINT[key];
@@ -1600,8 +1792,9 @@ export class Game {
     const ctx = this.ctx;
     const hud = useHud.getState();
     for (const r of this.riddles) {
+      if (r.id === "hall-note" && this.hallNote) continue;
       if (hud.solved.includes(r.id)) {
-        if (r.id !== "alencina") this.drawSheet(a?.key, 0, r.x, r.y - 8, 36, 36, 1, true);
+        if (r.id !== "alencina" && r.id !== "hall-note") this.drawSheet(a?.key, 0, r.x, r.y - 8, 36, 36, 1, true);
         continue;
       }
       this.drawSheet(a?.paper, Math.floor(this.time * 4) % 4, r.x, r.y, 48, 48, 1, true);
@@ -1614,7 +1807,7 @@ export class Game {
       if (!this.doorVisible(d)) continue;
       const def = RIDDLE_BY_ID[d.keyId];
       const color = d.keyId === "hall" ? "#f0c35a" : def?.color ?? "#d4c4a8";
-      const opened = hud.openedDoors.includes(d.keyId);
+      const opened = d.keyId === "hall-gate" ? this.hallGate : hud.openedDoors.includes(d.keyId);
       ctx.save();
       ctx.globalAlpha = opened ? 0.95 : 0.8;
       if (a?.door) {
@@ -1638,7 +1831,17 @@ export class Game {
     }
     for (const d of this.darts) {
       if (d.gone) continue;
+      ctx.save();
+      ctx.filter = "sepia(1) saturate(2.4) hue-rotate(8deg) brightness(1.15)";
       this.drawSheet(a?.dart, Math.floor(this.time * 10) % 4, d.x, d.y, 40, 28, 1, true);
+      ctx.restore();
+    }
+    for (const w of this.gateWalls()) {
+      ctx.fillStyle = "#3a3228";
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+      ctx.strokeStyle = "#c4a060";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(w.x, w.y, w.w, w.h);
     }
     if (this.level.hall) this.drawHallSet();
     for (const n of this.npcs) {
@@ -1659,8 +1862,8 @@ export class Game {
       this.drawSheet(img, frame, n.x, n.y - bounce, w, h, 1, false);
     }
     if (this.level.hall) {
-      this.drawThroneFront(1484);
-      this.drawThroneFront(1716);
+      this.drawThroneFront(HALL_LAYOUT.mayX);
+      this.drawThroneFront(HALL_LAYOUT.miaX);
       this.drawHallTalk();
     }
   }
@@ -1768,8 +1971,11 @@ export class Game {
     const p = this.player;
     const px = p.x + this.pw / 2;
     const feet = p.y + this.ph;
-    const inSight = px > 1080 && this.overlay !== "intro";
-    const onDais = px > 1360 && px < 1860 && feet > 470 && feet < 620;
+    const inSight = px > HALL_LAYOUT.plaqueX - 200 && this.overlay !== "intro";
+    const onDais =
+      px > HALL_LAYOUT.daisX - 20 && px < HALL_LAYOUT.daisX + 640 && feet > 470 && feet < 620;
+
+    if (!onDais) this.hallLeftDais = true;
 
     if (!inSight) {
       this.clapPlayed = false;
@@ -1802,7 +2008,9 @@ export class Game {
       this.hallPhase !== "write" &&
       this.hallPhase !== "gather"
     ) {
-      if (this.ceremonyTalked) this.startWrite();
+      if (this.ceremonyTalked && !this.hallLeftDais) {
+        /* form dismissed, still standing on the dais */
+      } else if (this.ceremonyTalked) this.startWrite();
       else if (this.npcClap <= 0.25) this.startGather();
     }
 
@@ -1840,7 +2048,7 @@ export class Game {
       const ang = Math.PI * (0.18 + 0.64 * t);
       return {
         id,
-        x: 1600 - Math.cos(ang) * 210,
+        x: HALL_LAYOUT.cx - Math.cos(ang) * 210,
         y: 598 - Math.sin(ang) * 36,
       };
     });
@@ -1872,7 +2080,7 @@ export class Game {
     this.talkIndex = 0;
     this.talkTimer = 0;
     this.ceremonyLock = true;
-    this.overlay = "playing";
+    this.setPlayOverlay("playing");
     this.syncHud();
   }
 
@@ -1881,14 +2089,14 @@ export class Game {
       this.hallPhase = "done";
       this.ceremonyLock = false;
       this.ceremonyTalked = true;
-      this.overlay = "playing";
+      this.setPlayOverlay("playing");
       this.syncHud();
       return;
     }
     this.hallPhase = "write";
     this.ceremonyTalked = true;
     this.ceremonyLock = true;
-    this.overlay = "hall";
+    this.setPlayOverlay("hall");
     this.syncHud();
   }
 
@@ -1923,24 +2131,27 @@ export class Game {
   private drawHallSet() {
     const ctx = this.ctx;
     const hud = useHud.getState();
+    const px = HALL_LAYOUT.plaqueX;
+    const pw = HALL_LAYOUT.plaqueW;
+    const cx = HALL_LAYOUT.cx;
     ctx.save();
     ctx.fillStyle = "#3a3228";
-    ctx.fillRect(1236, 4, 728, 248);
+    ctx.fillRect(px, 4, pw, 248);
     ctx.strokeStyle = "#8a7358";
     ctx.lineWidth = 7;
-    ctx.strokeRect(1236, 4, 728, 248);
+    ctx.strokeRect(px, 4, pw, 248);
     ctx.strokeStyle = "#c4a060";
     ctx.lineWidth = 2;
-    ctx.strokeRect(1248, 16, 704, 224);
+    ctx.strokeRect(px + 12, 16, pw - 24, 224);
     ctx.fillStyle = "#4a4034";
-    ctx.fillRect(1260, 56, 680, 176);
+    ctx.fillRect(px + 24, 56, pw - 48, 176);
     this.drawStonePedestal();
-    this.drawThroneBack(1484, "May");
-    this.drawThroneBack(1716, "Mia");
+    this.drawThroneBack(HALL_LAYOUT.mayX, "May");
+    this.drawThroneBack(HALL_LAYOUT.miaX, "Mia");
     ctx.fillStyle = "#efe8dc";
     ctx.font = "600 26px Fraunces, serif";
     ctx.textAlign = "center";
-    ctx.fillText("Deska legend", 1600, 46);
+    ctx.fillText("Deska legend", cx, 46);
     const entries = hud.legends.length
       ? hud.legends
       : hud.fame.map((name, i) => ({
@@ -1956,7 +2167,7 @@ export class Game {
       const { slot, layer } = placed[i] ?? { slot: i % 12, layer: 0 };
       const col = slot % 3;
       const row = Math.floor(slot / 3);
-      const baseX = 1284 + col * 214 + layer * 12;
+      const baseX = px + 48 + col * 214 + layer * 12;
       const baseY = 86 + row * 42 + layer * 8;
       const dir = slot % 2 === 0 ? 1 : -1;
       const fresh = i === entries.length - 1 || e.name === this.lastSignedName;
@@ -1979,17 +2190,18 @@ export class Game {
 
   private drawStonePedestal() {
     const ctx = this.ctx;
+    const x = HALL_LAYOUT.daisX + 76;
     ctx.save();
     ctx.fillStyle = "#4a4034";
-    ctx.fillRect(1356, 508, 488, 40);
+    ctx.fillRect(x, 508, 488, 40);
     ctx.fillStyle = "#5a4e40";
-    ctx.fillRect(1376, 492, 448, 22);
+    ctx.fillRect(x + 20, 492, 448, 22);
     ctx.strokeStyle = "#2e2820";
     ctx.lineWidth = 2;
-    ctx.strokeRect(1356, 508, 488, 40);
-    ctx.strokeRect(1376, 492, 448, 22);
+    ctx.strokeRect(x, 508, 488, 40);
+    ctx.strokeRect(x + 20, 492, 448, 22);
     ctx.fillStyle = "rgba(210, 190, 160, 0.18)";
-    ctx.fillRect(1380, 494, 440, 5);
+    ctx.fillRect(x + 24, 494, 440, 5);
     ctx.restore();
   }
 
@@ -2086,12 +2298,12 @@ export class Game {
       const may = this.npcs.find((q) => q.who === "may");
       const mia = this.npcs.find((q) => q.who === "mia");
       this.drawBothBubble(
-        1600,
+        HALL_LAYOUT.cx,
         248,
         line.text,
-        may?.x ?? 1484,
+        may?.x ?? HALL_LAYOUT.mayX,
         (may?.y ?? 518) - 150,
-        mia?.x ?? 1716,
+        mia?.x ?? HALL_LAYOUT.miaX,
         (mia?.y ?? 518) - 140,
       );
       return;
@@ -2196,7 +2408,7 @@ export class Game {
     const a = this.assets;
     const img = a?.characters.fox?.idle ?? a?.idle;
     if (!img) return;
-    this.drawSheet(img, Math.floor(this.time * 4) % 4, 1460, 600, 120, 136, 1, false);
-    this.drawBubble(1460, 430, "Zvládneš se zapsat mezi legendy této hry?", true);
+    this.drawSheet(img, Math.floor(this.time * 4) % 4, HALL_LAYOUT.foxX, 600, 120, 136, 1, false);
+    this.drawBubble(HALL_LAYOUT.foxX, 430, "Zvládneš se zapsat mezi legendy této hry?", true);
   }
 }

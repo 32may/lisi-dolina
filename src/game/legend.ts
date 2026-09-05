@@ -25,10 +25,11 @@ export const EPILOGUE_LINES: { face: "happy" | "think" | "smile"; text: string }
 
 export const INTRO_LINE = "Zvládneš se zapsat mezi legendy této hry?";
 
-export function runTotals(s: Pick<HudState, "banked" | "runDeaths">): { coins: number; score: number } {
-  const coins = s.banked.reduce((a, n) => a + (n || 0), 0);
-  const score = Math.max(0, coins * 100 - (s.runDeaths || 0) * 25);
-  return { coins, score };
+export function runTotals(s: Pick<HudState, "banked" | "score" | "collectedCoins">): { coins: number; score: number } {
+  const fromIds = Object.values(s.collectedCoins ?? {}).reduce((a, arr) => a + arr.length, 0);
+  const fromBank = s.banked.reduce((a, n) => a + (n || 0), 0);
+  const coins = fromIds > 0 ? fromIds : fromBank;
+  return { coins, score: Math.max(0, s.score || 0) };
 }
 
 export function formatLegend(e: LegendEntry) {
