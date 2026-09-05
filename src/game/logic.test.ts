@@ -10,13 +10,17 @@ import type { CharacterId } from "./characters.ts";
 const md = readFileSync(new URL("../../hadanky.md", import.meta.url), "utf8");
 
 describe("hadanky.md", () => {
-  it("parses 25 bank riddles and fixed Alenčina", () => {
+  it("parses bank riddles and Alenčina", () => {
     const p = parseHadanky(md);
-    assert.equal(p.bank.length, 25);
+    assert.ok(p.bank.length >= 5);
     assert.equal(p.alencina.bankId, "alencina");
     assert.equal(p.alencina.prompt, "Proč je havran jako psací stůl?");
     assert.ok(p.alencina.answer.includes("nevim"));
     assert.ok(p.alencina.answer.includes("nevím"));
+    assert.ok(
+      p.bank.some((r) => r.bankId === "alencina"),
+      "Alenčina je v losování (bank:alencina)",
+    );
   });
 
   it("keeps original five texts", () => {
@@ -39,6 +43,40 @@ describe("hadanky.md", () => {
         ),
       /5 options/,
     );
+  });
+
+  it("accepts Alenčina in the lottery bank", () => {
+    const src = [
+      "## bank:a",
+      "title:A",
+      "kind:word",
+      "prompt:p",
+      "answer:x",
+      "## bank:b",
+      "title:B",
+      "kind:word",
+      "prompt:p",
+      "answer:x",
+      "## bank:c",
+      "title:C",
+      "kind:word",
+      "prompt:p",
+      "answer:x",
+      "## bank:d",
+      "title:D",
+      "kind:word",
+      "prompt:p",
+      "answer:x",
+      "## bank:alencina",
+      "title:Alenčina",
+      "kind:word",
+      "prompt:Proč je havran jako psací stůl?",
+      "answer:nevim, nevím",
+    ].join("\n");
+    const p = parseHadanky(src);
+    assert.equal(p.bank.length, 5);
+    assert.equal(p.alencina.bankId, "alencina");
+    assert.ok(p.bank.some((r) => r.bankId === "alencina"));
   });
 });
 

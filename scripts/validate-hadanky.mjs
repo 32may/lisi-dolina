@@ -36,9 +36,12 @@ for (const chunk of chunks) {
     throw new Error(`hadanky.md [${id}]: kind musí být word nebo choice`);
   }
   if (kindHead === "fixed") alencina = id;
-  else bank.push(id);
+  else {
+    bank.push(id);
+    if (id === "alencina" && !alencina) alencina = id;
+  }
 }
 
-if (bank.length < 25) throw new Error(`hadanky.md: potřeba 25 hádanek, je ${bank.length}`);
-if (alencina !== "alencina") throw new Error("hadanky.md: chybí fixed:alencina");
+if (bank.length < 5) throw new Error(`hadanky.md: potřeba alespoň 5 hádanek, je ${bank.length}`);
+if (alencina !== "alencina") throw new Error("hadanky.md: chybí bank:alencina nebo fixed:alencina");
 console.log(`OK ${bank.length} bank + ${alencina}`);

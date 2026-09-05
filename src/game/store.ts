@@ -297,11 +297,15 @@ export const useHud = create<
     if (!checkRiddle(id, answer, get().riddleRoll)) return false;
     const s = get();
     if (s.solved.includes(id)) return true;
+    const rolled = s.riddleRoll?.[id];
+    const isAlencina = id === "alencina" || rolled === "alencina";
     const keys = id === "alencina" ? s.keys : s.keys.includes(id) ? s.keys : [...s.keys, id];
+    const solved = [...s.solved, id];
+    if (isAlencina && !solved.includes("alencina")) solved.push("alencina");
     set({
-      solved: [...s.solved, id],
+      solved,
       keys,
-      banner: id === "alencina" ? "Dveře do jeskyně tvůrců čekají" : s.banner,
+      banner: isAlencina ? "Dveře do jeskyně tvůrců čekají" : s.banner,
     });
     const next = get();
     if (!next.cheated) set({ legit: snapFrom(next) });

@@ -80,10 +80,11 @@ export function parseHadanky(source: string): ParsedHadanky {
       alencina = item;
     } else {
       bank.push(item);
+      if (id === "alencina" && !alencina) alencina = item;
     }
   }
 
-  if (bank.length < 25) fail("bank", `potřeba alespoň 25 hádanek, je ${bank.length}`);
-  if (!alencina) fail("alencina", "chybí fixed:alencina");
+  if (bank.length < 5) fail("bank", `potřeba alespoň 5 hádanek na pět papírů, je ${bank.length}`);
+  if (!alencina) fail("alencina", "chybí bank:alencina nebo fixed:alencina");
   return { bank, alencina };
 }

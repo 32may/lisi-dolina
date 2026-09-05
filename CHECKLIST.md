@@ -1,8 +1,10 @@
-# Liščí Dolina — pracovní checklist auditu 2.2
+# Liščí Dolina — verze 3.0
 
-Pracovní větev: `fix/audit-2.2`. Výchozí auditovaný commit: `fd35aae`.
+Pracovní větev: `v3.0` (záloha i na `fix/audit-2.2`). Tag: `v3.0`.
 Save: `lisi-dolina-v4` (čte i v3 a migrují se mince jako první N ID dané mapy).
 Sazby bodů: 100 hazard, 50 minutí stráže, 150 zabití, 120 dvojskok, 100 lucerna, 500 vlajka. `Math.round`.
+
+3.0 navíc: intro jen deska legend + liška; jeskyně tvůrců podle koláže; obchůdek jako stánek na cestě; Alenčina v losování (`bank:alencina`).
 
 Ověřeno zde: `tsc` PASS, `vite build` PASS, `src/game/logic.test.ts` 13/13, `validate-hadanky` PASS.
 Prohlížeč: intro kamera drží camX=2360 / 10 s; smrt → dead bez mřížky → jeden pick; HUD klíče+páky+body; dřevěný shop; mince ID `0:0` ihned do měšce; IDDQD nastaví cheated; MAYOFF vrátí fox/0.

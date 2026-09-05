@@ -4,7 +4,7 @@
 
 - **GitHub:** https://github.com/32may/lisi-dolina
 - **Účet:** 32may
-- **Verze:** 2.2 — body, jedinečné mince, deska legend (SQL), 25 hádanek z `hadanky.md`
+- **Verze:** 3.0 — intro jen deska legend, jeskyně tvůrců podle koláže, obchůdek jako stánek, Alenčina v losování
 
 ## Ovládání
 

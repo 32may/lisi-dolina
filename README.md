@@ -16,4 +16,4 @@ Začínáš s liškou. Mince jdou do měšce hned po sběru. Obchod po vlajce pr
 
 Hádanky se berou z [`hadanky.md`](hadanky.md). Testovací kódy jsou v [`kody.md`](kody.md). Sazby bodů v `src/game/progress.ts`.
 
-Verze 2.2. Save `lisi-dolina-v4`. Deska legend je sdílená (SQL), ne localStorage.
+Verze 3.0. Save `lisi-dolina-v4`. Deska legend je sdílená (SQL), ne localStorage.

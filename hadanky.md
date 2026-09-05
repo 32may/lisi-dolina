@@ -5,7 +5,7 @@ Tento soubor je **zdroj herního obsahu**. Při startu hry se načte a ověří.
 
 ## Pravidla
 
-Jeden blok začíná řádkem `## bank:<id>` (běžná hádanka) nebo `## fixed:alencina`.
+Jeden blok začíná řádkem `## bank:<id>`. Alenčina je `## bank:alencina` (jde i do losování pěti papírů) nebo `## fixed:alencina` (jen papír v jeskyni).
 Povinná pole:
 
 - `title:` krátký název
@@ -18,8 +18,8 @@ Pro `kind: choice` ještě:
 - `options:` právě pět možností, čárkou oddělených; jedna z nich musí být ve `answer`
 
 `id` musí být jedinečné, jen malá písmena, číslice a pomlčka.
-Nová hra náhodně vybere **pět** běžných hádanek
-pro pět papírů (`mapa`, `tma`, `jmeno`, `houba`, `mesic`).
+Nová hra náhodně vybere **pět** hádanek z banky
+pro pět papírů (`mapa`, `tma`, `jmeno`, `houba`, `mesic`). Alenčina může padnout i mezi ně.
 
 Změna textu v tomto souboru se projeví po obnovení hry (dev server načte MD).
 Produkční build zabalí soubor přímo do aplikace.
