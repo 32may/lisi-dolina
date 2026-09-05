@@ -18,7 +18,7 @@ Pro `kind: choice` ještě:
 - `options:` právě pět možností, čárkou oddělených; jedna z nich musí být ve `answer`
 
 `id` musí být jedinečné, jen malá písmena, číslice a pomlčka.
-Alenčina je mimo losování. Nová hra náhodně vybere **pět** běžných hádanek
+Nová hra náhodně vybere **pět** běžných hádanek
 pro pět papírů (`mapa`, `tma`, `jmeno`, `houba`, `mesic`).
 
 Změna textu v tomto souboru se projeví po obnovení hry (dev server načte MD).
@@ -94,7 +94,7 @@ answer: klic, klíč
 ## bank:reka
 title: Tekutá hádanka
 kind: word
-prompt: Běžím bez nohou, mám koryto bez slámy. Co jsem?
+prompt: Běžím bez nohou, mám koryto bez krmení. Co jsem?
 answer: reka, řeka, potok
 
 ## bank:hodiny
@@ -124,7 +124,7 @@ answer: vitr, vítr
 ## bank:zrcadlo
 title: Stříbrný chyták
 kind: word
-prompt: Ono tě nevidí. Když se na něj podíváš ty, uvidíš jen sebe. Co je to?
+prompt: Ono tě nevidí. Když se na něj podíváš ty, uvidíš sebe. Co je to?
 answer: zrcadlo
 
 ## bank:hreben
@@ -136,32 +136,20 @@ answer: hreben, hřeben
 ## bank:most
 title: Spojovací otázka
 kind: word
-prompt: Spojím dva břehy, a přece nikam nejdu. Co jsem?
+prompt: Dostanu tě z jednoho břehu na druhý, a přece se nepohnu. Co jsem?
 answer: most
 
-## bank:komin
-title: Kouřový list
+## bank:dest
+title: Zahradnická hádanka
 kind: word
-prompt: Dům má čepici, z ní jde kouř. Co je ta čepice?
-answer: komin, komín
-
-## bank:deste
-title: Kapková hádanka
-kind: word
-prompt: Padám z nebe, zalévám zahradu, ale nejsem slza. Co jsem?
+prompt: Padám z nebe a jsem požehnáním pro zahradu. Co jsem?
 answer: dest, déšť, destik, deštík, prsi, prší
 
 ## bank:ruka
 title: Pět bratří
 kind: word
-prompt: Pět bratří v jedné posteli, každý má svou čepici. Co to je?
+prompt: Pět bratří, celý život spolu. Každý jinak vysoký, nejschopnější jsou spolu. Kdo jsou?
 answer: ruka, prsty, ruka s prsty
-
-## bank:postel
-title: Noční chyták
-kind: word
-prompt: Ve dne stojím na nohou, v noci mě položí na záda. Co jsem?
-answer: postel, lužko, lůžko
 
 ## bank:snih
 title: Zimní list
@@ -178,8 +166,8 @@ answer: duha
 ## bank:kniha
 title: Listnatý chyták
 kind: word
-prompt: Mám listy, ale nejsem strom. Co jsem?
-answer: kniha, sešit, sesit
+prompt: Mám listy, ale nejsem strom. Vyprávím příběhy, ale nemám ústa. Co jsem?
+answer: kniha, knížka, sešit, sesit
 
 ## bank:okno
 title: Skleněný list
@@ -187,7 +175,7 @@ kind: word
 prompt: Vidíš skrze mě svět, ale já sama nevidím. Co jsem?
 answer: okno, okynko, okénko
 
-## fixed:alencina
+## bank:alencina
 title: Alenčina
 kind: word
 prompt: Proč je havran jako psací stůl?
