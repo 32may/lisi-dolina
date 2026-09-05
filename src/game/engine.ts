@@ -29,6 +29,8 @@ import {
 } from "./constants";
 import { Input, type Actions } from "./input";
 import { LEVELS } from "./levels";
+import { formatLegend, HALL_LINES, layoutLegendSlots, runTotals } from "./legend";
+import { addLegend, listLegends } from "./legend.functions";
 import { RIDDLE_BY_ID } from "./riddles";
 import { useHud } from "./store";
 import type {
@@ -98,6 +100,8 @@ interface Companion {
   y: number;
   facing: 1 | -1;
   anim: number;
+  tx?: number;
+  ty?: number;
 }
 
 interface DartLive extends DartDef {
@@ -153,6 +157,18 @@ export class Game {
   time = 0;
   deaths = 0;
   reducedMotion = false;
+  godMode = false;
+  npcClap = 0;
+  npcDone = false;
+  hallPhase: "idle" | "clap" | "gather" | "talk" | "write" | "done" = "idle";
+  talkIndex = 0;
+  talkTimer = 0;
+  gatherT = 0;
+  ceremonyLock = false;
+  ceremonyTalked = false;
+  clapPlayed = false;
+  lastSignedName: string | null = null;
+  playerTarget: { x: number; y: number } | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -171,7 +187,14 @@ export class Game {
 
   async start() {
     this.assets = await loadAssets();
+    try {
+      const rows = await listLegends();
+      useHud.getState().patch({ legends: rows });
+    } catch {
+      /* preview without DB still plays */
+    }
     useHud.getState().patch({ ready: true });
+    if (!useHud.getState().seenIntro) this.beginIntro();
     this.running = true;
     this.last = performance.now();
     this.raf = requestAnimationFrame(this.loop);
@@ -277,10 +300,120 @@ export class Game {
   }
 
   submitFame(name: string) {
-    useHud.getState().addFame(name);
+    const hud = useHud.getState();
+    if (hud.legendSigned) {
+      this.closeHall();
+      return;
+    }
+    const n = name.trim().slice(0, 12);
+    if (!n) return;
+    const { score, coins } = runTotals(hud);
+    const cheated = hud.cheated;
+    hud.signLegend(n, score, coins);
+    this.lastSignedName = n;
     this.audio.win();
+    this.burst(1590, 180, 22, "#e8d6b4");
+    this.closeHall();
+    void addLegend({ data: { name: n, score: cheated ? 0 : score, coins: cheated ? 0 : coins, cheater: cheated } })
+      .then((rows) => {
+        const cur = useHud.getState().legends;
+        const seen = new Set(rows.map((r) => `${r.name}|${r.score}|${r.coins}|${r.cheater ? 1 : 0}`));
+        const merged = [...rows];
+        for (const e of cur) {
+          const k = `${e.name}|${e.score}|${e.coins}|${e.cheater ? 1 : 0}`;
+          if (!seen.has(k)) merged.push(e);
+        }
+        useHud.getState().patch({ legends: merged });
+      })
+      .catch(() => {
+        /* local copy already on the plaque */
+      });
+  }
+
+  closeHall() {
     this.overlay = "playing";
+    this.npcDone = true;
+    this.npcClap = 0;
+    this.hallPhase = "done";
+    this.ceremonyLock = false;
+    this.ceremonyTalked = true;
     this.syncHud();
+  }
+
+  beginIntro() {
+    this.loadLevel(14, true);
+    this.overlay = "intro";
+    this.camX = 1180;
+    this.camY = 0;
+    this.syncHud();
+  }
+
+  dismissIntro() {
+    useHud.getState().markIntroSeen();
+    this.goMenu("title");
+  }
+
+  advanceEpilogue() {
+    useHud.getState().patch({ epilogueStep: useHud.getState().epilogueStep + 1 });
+  }
+
+  endCompletedGame() {
+    useHud.getState().newGame();
+    this.beginIntro();
+  }
+
+  seekCreatorsCave() {
+    useHud.getState().patch({ unlocked: MAIN_LEVELS, overlay: "levels" });
+    this.goMenu("levels");
+  }
+
+  applyCheat(code: string) {
+    const hud = useHud.getState();
+    const raw = code.trim().toUpperCase();
+    if (raw === "IDDQD") {
+      this.godMode = !this.godMode;
+      hud.patch({ banner: this.godMode ? "Nesmrtelnost" : "Smrtelnost zpět" });
+      this.audio.key();
+      return;
+    }
+    if (raw === "DOOM") {
+      for (const g of this.guards) {
+        g.dead = true;
+        g.squish = 0.22;
+      }
+      for (const d of this.darts) d.gone = true;
+      this.audio.stomp();
+      hud.patch({ banner: "DOOM" });
+      return;
+    }
+    if (raw === "IDKFA") {
+      hud.ownAll();
+      this.audio.key();
+      return;
+    }
+    if (raw === "IAAAY") {
+      hud.devUnlock();
+      this.audio.key();
+      return;
+    }
+    if (raw === "MAYOFF") {
+      this.godMode = false;
+      hud.mayOff();
+      const s = useHud.getState();
+      this.applyCharacter(s.character);
+      const inHall = Boolean(this.level.hall);
+      const hallLocked = inHall && !s.solved.includes("alencina") && !s.openedDoors.includes("hall");
+      const secret = Object.values(RIDDLE_BY_ID).find((r) => r.secretLevel === this.level.id);
+      const bonusLocked =
+        Boolean(this.level.secret) &&
+        !inHall &&
+        !!secret &&
+        !s.keys.includes(secret.id) &&
+        !s.openedDoors.includes(secret.id);
+      const lockedMain = !this.level.secret && !inHall && this.level.id >= s.unlocked;
+      if (hallLocked || bonusLocked || lockedMain) this.goMenu("title");
+      this.audio.key();
+    }
   }
 
   private applyCharacter(id: CharacterId) {
@@ -308,6 +441,14 @@ export class Game {
     this.darts = (def.darts ?? extra.darts ?? []).map((d) => ({ ...d, t: d.phase ?? 0, gone: false }));
     this.npcs = (def.npcs ?? []).map((n) => ({ ...n }));
     this.companions = [];
+    this.hallPhase = useHud.getState().legendSigned && def.hall ? "done" : "idle";
+    this.ceremonyLock = false;
+    this.ceremonyTalked = Boolean(def.hall && useHud.getState().legendSigned);
+    this.clapPlayed = false;
+    this.npcClap = 0;
+    this.playerTarget = null;
+    this.talkIndex = 0;
+    this.talkTimer = 0;
     if (def.hall) {
       const owned = useHud.getState().owned;
       const current = useHud.getState().character;
@@ -380,6 +521,8 @@ export class Game {
     if (hud.muted !== this.audio.muted) this.audio.setMuted(hud.muted);
 
     const actions = this.input.sample();
+    const cheat = this.input.sampleCheat();
+    if (cheat) this.applyCheat(cheat);
     if (this.overlay === "playing") {
       if (actions.pause) {
         this.overlay = "paused";
@@ -391,10 +534,12 @@ export class Game {
         return;
       }
       this.simulate(dt, actions);
+      if (this.level.hall) this.tickHall(dt, actions);
     } else if (this.overlay === "dead") {
       this.tickDeath(dt, actions);
     } else {
       this.animateWorld(dt);
+      if (this.overlay === "hall" || this.overlay === "intro") this.updateCamera(dt);
       if (this.overlay === "paused" && (actions.pause || actions.confirm)) {
         this.overlay = "playing";
         this.syncHud();
@@ -428,11 +573,17 @@ export class Game {
     }
     for (const c of this.companions) {
       c.anim += dt;
-      const goal = 1420 + (c.id === "fox" ? 0 : c.id === "capybara" ? 40 : c.id === "porcupine" ? 80 : c.id === "toddler" ? 120 : 160);
-      if (c.x < goal) {
-        c.x += 90 * dt;
-        c.facing = 1;
-      }
+      if (this.ceremonyLock) continue;
+      const p = this.player;
+      if (!p || p.deadTimer > 0) continue;
+      const i = this.companions.indexOf(c);
+      const gap = 46 + i * 42;
+      const tx = Math.max(8, Math.min(this.level.width - 40, p.x - p.facing * gap));
+      const ty = p.y + this.ph - CHAR_BY_ID[c.id].h;
+      const dx = tx - c.x;
+      c.x += dx * Math.min(1, dt * 5.2);
+      c.y += (ty - c.y) * Math.min(1, dt * 6.5);
+      if (Math.abs(dx) > 6) c.facing = dx > 0 ? 1 : -1;
     }
     if (this.player) this.player.anim += dt;
   }
@@ -472,6 +623,13 @@ export class Game {
 
     if (p.carried) {
       this.tickCarry(dt);
+      this.animateWorld(dt);
+      this.updateCamera(dt);
+      return;
+    }
+
+    if (this.ceremonyLock) {
+      this.nudgeHeroes(dt);
       this.animateWorld(dt);
       this.updateCamera(dt);
       return;
@@ -635,12 +793,18 @@ export class Game {
       const door = this.doors.find((d) => aabb(hit, { x: d.x - 24, y: d.y - 90, w: 72, h: 110 }));
       if (!door) return;
       if (!this.doorReady(door)) {
-        useHud.getState().patch({ hint: door.keyId === "hall" ? "Ještě ne všechny páky" : "Chybí klíč" });
+        useHud.getState().patch({
+          hint: door.keyId === "hall" ? "Nejprve Alenčina hádanka" : "Chybí klíč",
+        });
         return;
       }
       const hud = useHud.getState();
       if (door.keyId === "hall" && hud.owned.length < 5) {
         useHud.getState().patch({ hint: "Potřebujete všechny postavy" });
+        return;
+      }
+      if (door.keyId === "hall" && !hud.solved.includes("alencina")) {
+        useHud.getState().patch({ hint: "Nejprve Alenčina hádanka" });
         return;
       }
       this.audio.door();
@@ -657,13 +821,13 @@ export class Game {
 
   private doorReady(door: DoorSpot) {
     const hud = useHud.getState();
-    if (door.keyId === "hall") return hud.levers.every(Boolean);
+    if (door.keyId === "hall") return hud.solved.includes("alencina");
     return hud.keys.includes(door.keyId);
   }
 
   private doorVisible(door: DoorSpot) {
     const hud = useHud.getState();
-    if (door.keyId === "hall") return hud.levers.every(Boolean);
+    if (door.keyId === "hall") return hud.solved.includes("alencina") || hud.openedDoors.includes("hall");
     return hud.keys.includes(door.keyId) || hud.openedDoors.includes(door.keyId);
   }
 
@@ -858,16 +1022,23 @@ export class Game {
       }
     }
     const f = this.level.flag;
-    const flagBox = { x: f.x - 16, y: f.y - 96, w: 48, h: 96 };
-    if (aabb(hit, flagBox)) {
-      this.audio.win();
-      this.audio.flag();
-      this.overlay = "shop";
-      const coins = this.coins.filter((c) => c.taken).length;
-      useHud.getState().recordWin(this.level.id, coins);
-      this.burst(f.x, f.y - 50, 24, "#d4c4a8");
-      this.syncHud();
-      return;
+    if (!this.level.hall) {
+      const flagBox = { x: f.x - 16, y: f.y - 96, w: 48, h: 96 };
+      if (aabb(hit, flagBox)) {
+        this.audio.win();
+        this.audio.flag();
+        const coins = this.coins.filter((c) => c.taken).length;
+        useHud.getState().recordWin(this.level.id, coins);
+        this.burst(f.x, f.y - 50, 24, "#d4c4a8");
+        if (this.level.id === MAIN_LEVELS - 1 && !this.level.secret) {
+          this.overlay = "epilogue";
+          useHud.getState().patch({ overlay: "epilogue", epilogueStep: 0, unlocked: MAIN_LEVELS });
+        } else {
+          this.overlay = "shop";
+        }
+        this.syncHud();
+        return;
+      }
     }
     this.touchPapers(hit);
     this.touchDoors(hit);
@@ -906,12 +1077,6 @@ export class Game {
       if (!this.doorVisible(d)) continue;
       const box = { x: d.x - 24, y: d.y - 90, w: 72, h: 110 };
       if (!aabb(hit, box)) continue;
-      const opened = useHud.getState().openedDoors.includes(d.keyId);
-      if (opened) {
-        const secret = d.keyId === "hall" ? 14 : RIDDLE_BY_ID[d.keyId]?.secretLevel;
-        if (secret != null && secret !== this.level.id) this.enterSecret(secret);
-        return;
-      }
       if (this.stats.ability !== "door") {
         useHud.getState().patch({ hint: "Jen kapibara dveře otevře" });
       }
@@ -930,14 +1095,8 @@ export class Game {
     }
   }
 
-  private touchNpcs(hit: Rect) {
-    if (!this.level.hall) return;
-    for (const n of this.npcs) {
-      if (!aabb(hit, { x: n.x - 28, y: n.y - 80, w: 64, h: 90 })) continue;
-      this.overlay = "hall";
-      this.syncHud();
-      return;
-    }
+  private touchNpcs(_hit: Rect) {
+    /* hall flow lives in tickHall */
   }
 
   private touchGuards() {
@@ -974,12 +1133,14 @@ export class Game {
   }
 
   private kill() {
+    if (this.godMode) return;
     const p = this.player;
     if (p.deadTimer > 0) return;
     p.deadTimer = 1.15;
     p.vy = -280;
     p.vx *= 0.3;
     this.deaths += 1;
+    useHud.getState().addDeath();
     this.trauma = Math.min(1, this.trauma + 0.55);
     this.audio.die();
     this.burst(p.x + this.pw / 2, p.y + this.ph / 2, 16, "#c45c4a");
@@ -1090,7 +1251,8 @@ export class Game {
 
   private syncHud() {
     const coins = this.coins.filter((c) => c.taken).length;
-    this.input.blocked = this.overlay === "riddle" || this.overlay === "hall";
+    this.input.blocked =
+      this.overlay === "riddle" || this.overlay === "hall" || this.overlay === "intro" || this.overlay === "epilogue";
     useHud.getState().patch({
       overlay: this.overlay,
       coins,
@@ -1152,6 +1314,15 @@ export class Game {
       playLevel: (id: number) => void;
       setHero: (id: string) => void;
       guardPos: () => { x: number; y: number; w: number; h: number } | null;
+      cheat: (code: string) => void;
+      closeHall: () => void;
+      beginIntro: () => void;
+      dismissIntro: () => void;
+      endCompletedGame: () => void;
+      hallPhase: () => string;
+      advanceHallTalk: () => void;
+      resetHallSign: () => void;
+      hudSnap: () => Record<string, unknown>;
     };
     extra.getSpawnX = () => this.player.spawnX;
     extra.getOverlay = () => this.overlay;
@@ -1178,6 +1349,44 @@ export class Game {
     extra.guardPos = () => {
       const g = this.guards.find((q) => !q.dead);
       return g ? { x: g.x, y: g.y, w: g.w, h: g.h } : null;
+    };
+    extra.cheat = (code: string) => this.applyCheat(code);
+    extra.closeHall = () => this.closeHall();
+    extra.beginIntro = () => this.beginIntro();
+    extra.dismissIntro = () => this.dismissIntro();
+    extra.endCompletedGame = () => this.endCompletedGame();
+    extra.hallPhase = () => this.hallPhase;
+    extra.advanceHallTalk = () => this.advanceHallTalk();
+    extra.resetHallSign = () => {
+      useHud.getState().patch({ legendSigned: false });
+      this.ceremonyTalked = false;
+      this.hallPhase = "idle";
+      this.ceremonyLock = false;
+      this.clapPlayed = false;
+    };
+    extra.hudSnap = () => {
+      const s = useHud.getState();
+      return {
+        overlay: s.overlay,
+        keys: s.keys,
+        levers: s.levers,
+        levelName: s.levelName,
+        banner: s.banner,
+        character: s.character,
+        fame: s.fame,
+        solved: s.solved,
+        owned: s.owned,
+        godMode: this.godMode,
+        legendSigned: s.legendSigned,
+        hallPhase: this.hallPhase,
+        seenIntro: s.seenIntro,
+        cheated: s.cheated,
+        unlocked: s.unlocked,
+        purse: s.purse,
+        riddleRoll: s.riddleRoll,
+        legends: s.legends.map((e) => e.name),
+        companions: this.companions.map((c) => ({ id: c.id, x: Math.round(c.x), y: Math.round(c.y) })),
+      };
     };
   }
 
@@ -1271,8 +1480,10 @@ export class Game {
     }
     this.drawGuards(a);
     this.drawExtras(a);
-    const f = this.level.flag;
-    this.drawSheet(a?.flag, Math.floor(this.time * 6) % 4, f.x + 8, f.y - 8, 72, 96, 1, false);
+    if (!this.level.hall) {
+      const f = this.level.flag;
+      this.drawSheet(a?.flag, Math.floor(this.time * 6) % 4, f.x + 8, f.y - 8, 72, 96, 1, false);
+    }
     for (const c of this.companions) this.drawCompanion(a, c);
     this.drawPlayer(a);
     for (const q of this.particles) {
@@ -1390,7 +1601,7 @@ export class Game {
     const hud = useHud.getState();
     for (const r of this.riddles) {
       if (hud.solved.includes(r.id)) {
-        this.drawSheet(a?.key, 0, r.x, r.y - 8, 36, 36, 1, true);
+        if (r.id !== "alencina") this.drawSheet(a?.key, 0, r.x, r.y - 8, 36, 36, 1, true);
         continue;
       }
       this.drawSheet(a?.paper, Math.floor(this.time * 4) % 4, r.x, r.y, 48, 48, 1, true);
@@ -1429,38 +1640,39 @@ export class Game {
       if (d.gone) continue;
       this.drawSheet(a?.dart, Math.floor(this.time * 10) % 4, d.x, d.y, 40, 28, 1, true);
     }
+    if (this.level.hall) this.drawHallSet();
     for (const n of this.npcs) {
-      const img = n.who === "may" ? a?.may : a?.mia;
-      this.drawSheet(img, Math.floor(this.time * 4) % 4, n.x, n.y, 72, 96, 1, false);
+      const clapping = this.npcClap > 0;
+      const img =
+        n.who === "may"
+          ? clapping
+            ? a?.mayClap ?? a?.may
+            : a?.may
+          : clapping
+            ? a?.miaClap ?? a?.mia
+            : a?.mia;
+      const sitting = Boolean(this.level.hall);
+      const h = sitting ? 200 : n.who === "may" ? 112 : 94;
+      const w = sitting ? (n.who === "may" ? 156 : 138) : n.who === "may" ? 92 : 72;
+      const bounce = clapping ? Math.abs(Math.sin(this.time * 18)) * 4 : 0;
+      const frame = clapping ? Math.floor(this.time * 8) % 4 : Math.floor(this.time * 4) % 4;
+      this.drawSheet(img, frame, n.x, n.y - bounce, w, h, 1, false);
     }
     if (this.level.hall) {
-      ctx.save();
-      ctx.fillStyle = "rgba(20, 16, 18, 0.55)";
-      ctx.fillRect(780, 220, 520, 280);
-      ctx.strokeStyle = "#d4c4a8";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(780, 220, 520, 280);
-      ctx.fillStyle = "#efe8dc";
-      ctx.font = "600 20px Fraunces, serif";
-      ctx.textAlign = "center";
-      ctx.fillText("Jeskyně slávy", 1040, 252);
-      ctx.font = "500 16px Outfit, sans-serif";
-      hud.fame.forEach((name, i) => {
-        const col = i < 8 ? 0 : 1;
-        const row = i % 8;
-        ctx.fillStyle = "#d4c4a8";
-        ctx.textAlign = "left";
-        ctx.fillText(name, 820 + col * 240, 286 + row * 24);
-      });
-      ctx.restore();
+      this.drawThroneFront(1484);
+      this.drawThroneFront(1716);
+      this.drawHallTalk();
     }
   }
 
   private drawCompanion(a: Assets | null, c: Companion) {
     const ch = a?.characters[c.id];
     const st = CHAR_BY_ID[c.id];
-    const sheet = ch?.run ?? ch?.idle;
-    const frame = Math.floor(c.anim * 8) % 4;
+    const moving = this.ceremonyLock
+      ? c.tx != null && Math.hypot((c.tx ?? c.x) - c.x, (c.ty ?? c.y) - c.y) > 8
+      : Math.abs(this.player.x - c.x) > 28;
+    const sheet = moving ? (ch?.run ?? ch?.idle) : (ch?.idle ?? ch?.run);
+    const frame = Math.floor(c.anim * (moving ? 8 : 4)) % 4;
     if (!sheet) return;
     const ctx = this.ctx;
     ctx.save();
@@ -1541,5 +1753,450 @@ export class Game {
       this.drawHeart(cx - 10, cy - this.stats.drawH - 8, 10);
       this.drawHeart(cx + 12, cy - this.stats.drawH - 14, 8);
     }
+  }
+
+  advanceHallTalk() {
+    if (this.hallPhase !== "talk") return;
+    this.talkTimer = 0;
+    this.talkIndex += 1;
+    if (this.talkIndex >= HALL_LINES.length) this.startWrite();
+  }
+
+  private tickHall(dt: number, actions: Actions) {
+    if (!this.level.hall) return;
+    const hud = useHud.getState();
+    const p = this.player;
+    const px = p.x + this.pw / 2;
+    const feet = p.y + this.ph;
+    const inSight = px > 1080 && this.overlay !== "intro";
+    const onDais = px > 1360 && px < 1860 && feet > 470 && feet < 620;
+
+    if (!inSight) {
+      this.clapPlayed = false;
+      if (this.hallPhase === "clap") {
+        this.hallPhase = this.ceremonyTalked || hud.legendSigned ? "done" : "idle";
+        this.npcClap = 0;
+      }
+    }
+
+    if (inSight && !this.clapPlayed && (this.hallPhase === "idle" || this.hallPhase === "done")) {
+      this.clapPlayed = true;
+      this.hallPhase = "clap";
+      this.npcClap = 1.45;
+      this.audio.clap();
+      this.burst(1600, 380, 18, "#f0c35a");
+    }
+
+    if (this.hallPhase === "clap") {
+      this.npcClap = Math.max(0, this.npcClap - dt);
+      if (this.npcClap <= 0 && !onDais) {
+        this.hallPhase = this.ceremonyTalked || hud.legendSigned ? "done" : "idle";
+      }
+    }
+
+    if (
+      onDais &&
+      !hud.legendSigned &&
+      !this.ceremonyLock &&
+      this.hallPhase !== "talk" &&
+      this.hallPhase !== "write" &&
+      this.hallPhase !== "gather"
+    ) {
+      if (this.ceremonyTalked) this.startWrite();
+      else if (this.npcClap <= 0.25) this.startGather();
+    }
+
+    if (this.hallPhase === "gather") {
+      this.gatherT += dt;
+      this.nudgeHeroes(dt);
+      if (this.gatherT > 1.15) this.startTalk();
+    }
+
+    if (this.hallPhase === "talk") {
+      this.nudgeHeroes(dt);
+      this.talkTimer += dt;
+      if (actions.confirm || actions.jumpPressed || this.talkTimer > this.lineHold()) {
+        this.talkTimer = 0;
+        this.talkIndex += 1;
+        if (this.talkIndex >= HALL_LINES.length) this.startWrite();
+      }
+    }
+
+    if (this.hallPhase === "write" || this.hallPhase === "gather" || this.hallPhase === "talk") {
+      this.ceremonyLock = true;
+    }
+  }
+
+  private startGather() {
+    this.hallPhase = "gather";
+    this.gatherT = 0;
+    this.ceremonyLock = true;
+    this.npcClap = 0;
+    const hud = useHud.getState();
+    const ids = hud.owned;
+    const n = Math.max(1, ids.length);
+    const slots = ids.map((id, i) => {
+      const t = n === 1 ? 0.5 : i / (n - 1);
+      const ang = Math.PI * (0.18 + 0.64 * t);
+      return {
+        id,
+        x: 1600 - Math.cos(ang) * 210,
+        y: 598 - Math.sin(ang) * 36,
+      };
+    });
+    const current = hud.character;
+    const playerSlot = slots.find((s) => s.id === current) ?? slots[Math.floor(n / 2)];
+    this.player.vx = 0;
+    this.player.vy = 0;
+    this.playerTarget = playerSlot;
+    const prev = new Map(this.companions.map((c) => [c.id, c]));
+    this.companions = slots
+      .filter((s) => s.id !== current)
+      .map((s, i) => {
+        const old = prev.get(s.id);
+        const st = CHAR_BY_ID[s.id];
+        return {
+          id: s.id,
+          x: old?.x ?? this.player.x - 40 - i * 36,
+          y: old?.y ?? this.player.y,
+          tx: s.x - st.w / 2,
+          ty: s.y - st.h,
+          facing: 1 as const,
+          anim: old?.anim ?? i * 0.2,
+        };
+      });
+  }
+
+  private startTalk() {
+    this.hallPhase = "talk";
+    this.talkIndex = 0;
+    this.talkTimer = 0;
+    this.ceremonyLock = true;
+    this.overlay = "playing";
+    this.syncHud();
+  }
+
+  private startWrite() {
+    if (useHud.getState().legendSigned) {
+      this.hallPhase = "done";
+      this.ceremonyLock = false;
+      this.ceremonyTalked = true;
+      this.overlay = "playing";
+      this.syncHud();
+      return;
+    }
+    this.hallPhase = "write";
+    this.ceremonyTalked = true;
+    this.ceremonyLock = true;
+    this.overlay = "hall";
+    this.syncHud();
+  }
+
+  private nudgeHeroes(dt: number) {
+    const p = this.player;
+    if (this.playerTarget) {
+      const tx = this.playerTarget.x - this.pw / 2;
+      const ty = this.playerTarget.y - this.ph;
+      p.x += (tx - p.x) * Math.min(1, dt * 4);
+      p.y += (ty - p.y) * Math.min(1, dt * 4);
+      p.vx = 0;
+      p.vy = 0;
+      p.facing = 1;
+    }
+    for (const c of this.companions) {
+      if (c.tx == null || c.ty == null) continue;
+      c.x += (c.tx - c.x) * Math.min(1, dt * 4);
+      c.y += (c.ty - c.y) * Math.min(1, dt * 4);
+      c.facing = 1;
+    }
+  }
+
+  private lineHold() {
+    const line = HALL_LINES[this.talkIndex];
+    if (!line) return 3.8;
+    const n = line.text.length;
+    if (n > 70) return 8.6;
+    if (n > 40) return 6.6;
+    return 3.8;
+  }
+
+  private drawHallSet() {
+    const ctx = this.ctx;
+    const hud = useHud.getState();
+    ctx.save();
+    ctx.fillStyle = "#3a3228";
+    ctx.fillRect(1236, 4, 728, 248);
+    ctx.strokeStyle = "#8a7358";
+    ctx.lineWidth = 7;
+    ctx.strokeRect(1236, 4, 728, 248);
+    ctx.strokeStyle = "#c4a060";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1248, 16, 704, 224);
+    ctx.fillStyle = "#4a4034";
+    ctx.fillRect(1260, 56, 680, 176);
+    this.drawStonePedestal();
+    this.drawThroneBack(1484, "May");
+    this.drawThroneBack(1716, "Mia");
+    ctx.fillStyle = "#efe8dc";
+    ctx.font = "600 26px Fraunces, serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Deska legend", 1600, 46);
+    const entries = hud.legends.length
+      ? hud.legends
+      : hud.fame.map((name, i) => ({
+          id: i,
+          name,
+          score: 0,
+          coins: 0,
+          createdAt: "",
+          cheater: false,
+        }));
+    const placed = layoutLegendSlots(entries, 12);
+    entries.forEach((e, i) => {
+      const { slot, layer } = placed[i] ?? { slot: i % 12, layer: 0 };
+      const col = slot % 3;
+      const row = Math.floor(slot / 3);
+      const baseX = 1284 + col * 214 + layer * 12;
+      const baseY = 86 + row * 42 + layer * 8;
+      const dir = slot % 2 === 0 ? 1 : -1;
+      const fresh = i === entries.length - 1 || e.name === this.lastSignedName;
+      const angle = fresh ? 0.03 * dir : (0.16 + layer * 0.14) * dir * (layer % 2 === 0 ? 1 : 0.7);
+      ctx.save();
+      ctx.translate(baseX, baseY);
+      ctx.rotate(angle);
+      ctx.textAlign = "left";
+      ctx.font = fresh ? "800 22px Fraunces, serif" : "700 17px Fraunces, serif";
+      const label = formatLegend(e);
+      ctx.fillStyle = e.cheater ? (fresh ? "#e8b080" : "rgba(90, 40, 28, 0.88)") : fresh ? "#f0d48a" : "rgba(18, 12, 8, 0.82)";
+      ctx.fillText(label, 0, 0);
+      ctx.fillStyle = e.cheater ? "rgba(80, 30, 20, 0.55)" : fresh ? "rgba(60, 36, 12, 0.7)" : "rgba(232, 214, 180, 0.28)";
+      ctx.fillText(label, 1, -1);
+      ctx.restore();
+    });
+    ctx.restore();
+    if (this.overlay === "intro") this.drawIntroFox();
+  }
+
+  private drawStonePedestal() {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = "#4a4034";
+    ctx.fillRect(1356, 508, 488, 40);
+    ctx.fillStyle = "#5a4e40";
+    ctx.fillRect(1376, 492, 448, 22);
+    ctx.strokeStyle = "#2e2820";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1356, 508, 488, 40);
+    ctx.strokeRect(1376, 492, 448, 22);
+    ctx.fillStyle = "rgba(210, 190, 160, 0.18)";
+    ctx.fillRect(1380, 494, 440, 5);
+    ctx.restore();
+  }
+
+  private throneGeom(x: number) {
+    const seatY = 424;
+    const backW = 128;
+    const backH = 158;
+    const holeW = 58;
+    const holeH = 78;
+    return {
+      x,
+      seatY,
+      backW,
+      backH,
+      backTop: seatY - backH,
+      holeW,
+      holeH,
+      holeX: x - holeW / 2,
+      holeY: seatY - backH + 46,
+      seatW: 138,
+      seatH: 26,
+      armW: 22,
+    };
+  }
+
+  private drawCarvedName(x: number, y: number, label: string) {
+    const ctx = this.ctx;
+    ctx.font = "700 28px Fraunces, serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#2a2418";
+    ctx.fillText(label, x + 2, y + 3);
+    ctx.fillStyle = "#5a4c38";
+    ctx.fillText(label, x + 1, y + 1);
+    ctx.fillStyle = "#cbb99a";
+    ctx.fillText(label, x - 1.5, y - 1.5);
+    ctx.fillStyle = "#8a7a60";
+    ctx.fillText(label, x, y);
+  }
+
+  private drawThroneBack(x: number, label: string) {
+    const ctx = this.ctx;
+    const g = this.throneGeom(x);
+    ctx.save();
+    ctx.fillStyle = "#6a5a44";
+    ctx.strokeStyle = "#3a3228";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    this.addRoundRect(x - g.backW / 2, g.backTop, g.backW, g.backH + 10, 12);
+    this.addRoundRect(g.holeX, g.holeY, g.holeW, g.holeH, 16);
+    ctx.fill("evenodd");
+    ctx.beginPath();
+    this.addRoundRect(x - g.backW / 2, g.backTop, g.backW, g.backH + 10, 12);
+    this.addRoundRect(g.holeX, g.holeY, g.holeW, g.holeH, 16);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(210, 190, 160, 0.22)";
+    ctx.fillRect(x - g.backW / 2 + 8, g.backTop + 6, g.backW - 16, 8);
+    this.drawCarvedName(x, g.backTop + 22, label);
+    ctx.fillStyle = "#4a3e30";
+    ctx.fillRect(x - 36, g.seatY + 18, 72, 56);
+    ctx.restore();
+  }
+
+  private drawThroneFront(x: number) {
+    const ctx = this.ctx;
+    const g = this.throneGeom(x);
+    ctx.save();
+    ctx.fillStyle = "#5c4c38";
+    ctx.strokeStyle = "#3a3228";
+    ctx.lineWidth = 2;
+    this.roundRect(x - g.armW - g.seatW / 2 + 10, g.seatY - 40, g.armW, 52, 6);
+    ctx.fill();
+    ctx.stroke();
+    this.roundRect(x + g.seatW / 2 - 10, g.seatY - 40, g.armW, 52, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#6a5844";
+    this.roundRect(x - g.seatW / 2, g.seatY - 6, g.seatW, g.seatH, 7);
+    ctx.fill();
+    ctx.strokeStyle = "#3a3228";
+    ctx.stroke();
+    ctx.fillStyle = "rgba(210, 190, 160, 0.28)";
+    ctx.fillRect(x - g.seatW / 2 + 8, g.seatY - 4, g.seatW - 16, 5);
+    ctx.fillStyle = "#3e3226";
+    ctx.fillRect(x - g.seatW / 2 + 10, g.seatY + 16, g.seatW - 20, 10);
+    ctx.restore();
+  }
+
+  private drawHallTalk() {
+    if (this.hallPhase !== "talk") return;
+    const line = HALL_LINES[this.talkIndex];
+    if (!line) return;
+    if (line.who === "both") {
+      const may = this.npcs.find((q) => q.who === "may");
+      const mia = this.npcs.find((q) => q.who === "mia");
+      this.drawBothBubble(
+        1600,
+        248,
+        line.text,
+        may?.x ?? 1484,
+        (may?.y ?? 518) - 150,
+        mia?.x ?? 1716,
+        (mia?.y ?? 518) - 140,
+      );
+      return;
+    }
+    const n = this.npcs.find((q) => q.who === line.who);
+    if (!n) return;
+    this.drawBubble(n.x, n.y - 168, line.text, false);
+  }
+
+  private layoutBubble(text: string, maxW: number) {
+    const ctx = this.ctx;
+    ctx.font = "600 15px Outfit, sans-serif";
+    const words = text.split(" ");
+    const lines: string[] = [];
+    let cur = "";
+    for (const w of words) {
+      const t = cur ? `${cur} ${w}` : w;
+      if (ctx.measureText(t).width > maxW - 28) {
+        if (cur) lines.push(cur);
+        cur = w;
+      } else cur = t;
+    }
+    if (cur) lines.push(cur);
+    const bw = Math.min(maxW, Math.max(...lines.map((l) => ctx.measureText(l).width)) + 28);
+    const bh = 18 + lines.length * 20;
+    return { lines, bw, bh };
+  }
+
+  private paintBubbleText(x: number, y: number, laid: { lines: string[]; bw: number; bh: number }) {
+    const ctx = this.ctx;
+    ctx.fillStyle = "#2a221c";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = "600 15px Outfit, sans-serif";
+    laid.lines.forEach((l, i) => ctx.fillText(l, x, y - laid.bh + 10 + i * 20));
+  }
+
+  private drawTail(fromX: number, fromY: number, toX: number, toY: number) {
+    const ctx = this.ctx;
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const px = (-dy / len) * 7;
+    const py = (dx / len) * 7;
+    ctx.beginPath();
+    ctx.moveTo(fromX - px, fromY - py);
+    ctx.lineTo(fromX + px, fromY + py);
+    ctx.lineTo(toX, toY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  private drawBothBubble(x: number, y: number, text: string, ax: number, ay: number, bx: number, by: number) {
+    const ctx = this.ctx;
+    const laid = this.layoutBubble(text, 460);
+    ctx.save();
+    ctx.fillStyle = "rgba(250, 244, 234, 0.96)";
+    ctx.strokeStyle = "#4a3a28";
+    ctx.lineWidth = 2;
+    this.roundRect(x - laid.bw / 2, y - laid.bh, laid.bw, laid.bh, 14);
+    ctx.fill();
+    ctx.stroke();
+    this.drawTail(x - 70, y, ax, ay);
+    this.drawTail(x + 70, y, bx, by);
+    this.paintBubbleText(x, y, laid);
+    ctx.restore();
+  }
+
+  private drawBubble(x: number, y: number, text: string, wide: boolean) {
+    const ctx = this.ctx;
+    const laid = this.layoutBubble(text, wide ? 420 : 280);
+    ctx.save();
+    ctx.fillStyle = "rgba(250, 244, 234, 0.96)";
+    ctx.strokeStyle = "#4a3a28";
+    ctx.lineWidth = 2;
+    this.roundRect(x - laid.bw / 2, y - laid.bh, laid.bw, laid.bh, 14);
+    ctx.fill();
+    ctx.stroke();
+    this.drawTail(x, y, x, y + 14);
+    this.paintBubbleText(x, y, laid);
+    ctx.restore();
+  }
+
+  private roundRect(x: number, y: number, w: number, h: number, r: number) {
+    this.ctx.beginPath();
+    this.addRoundRect(x, y, w, h, r);
+  }
+
+  private addRoundRect(x: number, y: number, w: number, h: number, r: number) {
+    const ctx = this.ctx;
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  private drawIntroFox() {
+    const a = this.assets;
+    const img = a?.characters.fox?.idle ?? a?.idle;
+    if (!img) return;
+    this.drawSheet(img, Math.floor(this.time * 4) % 4, 1460, 600, 120, 136, 1, false);
+    this.drawBubble(1460, 430, "Zvládneš se zapsat mezi legendy této hry?", true);
   }
 }

@@ -97,4 +97,8 @@ export class GameAudio {
     this.beep(220, 0.1, "square", 0.12, -40);
     this.beep(330, 0.16, "triangle", 0.1, 80);
   }
+  clap() {
+    this.beep(880, 0.06, "triangle", 0.08, 40);
+    this.beep(990, 0.08, "triangle", 0.07, -20);
+  }
 }

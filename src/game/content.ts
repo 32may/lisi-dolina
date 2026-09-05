@@ -86,7 +86,8 @@ export const LEVEL_EXTRAS: Record<number, LevelExtras> = {
     ],
   },
   8: {
-    doors: [{ x: 6200, y: 580, keyId: "hall" }],
+    riddles: [{ x: 6100, y: 580, id: "alencina" }],
+    doors: [{ x: 6320, y: 580, keyId: "hall" }],
     darts: [dart(2180, 300, 1980, 2500, "x", 130), dart(4180, 280, 220, 460, "y", 100)],
   },
 };
@@ -248,7 +249,11 @@ export const SECRET_LEVELS: LevelDef[] = [
     secret: true,
     hall: true,
     spawn: { x: 70, y: 500 },
-    platforms: [ground(0, 2200, 600)],
+    platforms: [
+      ground(0, 2200, 600),
+      solid(1280, 548, 640, 56),
+      solid(1368, 500, 464, 52),
+    ],
     movers: [],
     coins: [
       { x: 400, y: 564 },
@@ -257,11 +262,11 @@ export const SECRET_LEVELS: LevelDef[] = [
     ],
     spikes: [],
     checkpoints: [lantern(600, 600)],
-    flag: { x: 2060, y: 600 },
+    flag: { x: -500, y: 600 },
     guards: [],
     npcs: [
-      { x: 1480, y: 600, who: "may" },
-      { x: 1580, y: 600, who: "mia" },
+      { x: 1484, y: 518, who: "may" },
+      { x: 1716, y: 518, who: "mia" },
     ],
   },
 ];

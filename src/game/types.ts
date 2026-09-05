@@ -10,7 +10,9 @@ export type Overlay =
   | "paused"
   | "dead"
   | "win"
-  | "hall";
+  | "hall"
+  | "intro"
+  | "epilogue";
 
 export type PlatformKind = "solid" | "oneway";
 
@@ -110,6 +112,28 @@ export interface LevelDef {
   npcs?: NpcSpot[];
 }
 
+export interface LegitSnap {
+  best: number[];
+  banked: number[];
+  unlocked: number;
+  character: CharacterId;
+  owned: CharacterId[];
+  keys: string[];
+  solved: string[];
+  levers: boolean[];
+  openedDoors: string[];
+  purse: number;
+}
+
+export interface LegendEntry {
+  id: number;
+  name: string;
+  score: number;
+  coins: number;
+  createdAt: string;
+  cheater?: boolean;
+}
+
 export interface HudState {
   overlay: Overlay;
   coins: number;
@@ -131,10 +155,19 @@ export interface HudState {
   levers: boolean[];
   openedDoors: string[];
   fame: string[];
+  legends: LegendEntry[];
+  legendSigned: boolean;
+  seenIntro: boolean;
+  runDeaths: number;
+  epilogueStep: number;
   riddleId: string | null;
+  riddleRoll: Record<string, string>;
   pendingLevel: number;
   hint: string;
   pickMode: "play" | "lantern";
+  banner: string | null;
+  cheated: boolean;
+  legit: LegitSnap | null;
 }
 
 declare global {

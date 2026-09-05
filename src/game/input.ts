@@ -1,3 +1,5 @@
+import { CHEAT_CODES, CHEAT_GAP_MS, type CheatCode } from "./cheats";
+
 const GAME_KEYS = new Set([
   "ArrowLeft",
   "ArrowRight",
@@ -26,6 +28,20 @@ export interface Actions {
   confirm: boolean;
 }
 
+function isTypingTarget(el: EventTarget | null) {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function letterFromEvent(e: KeyboardEvent): string | null {
+  if (e.code.startsWith("Key") && e.code.length === 4) return e.code.slice(3);
+  const k = e.key.toUpperCase();
+  if (k.length === 1 && k >= "A" && k <= "Z") return k;
+  return null;
+}
+
 export class Input {
   keys = new Set<string>();
   injected: Set<string> | null = null;
@@ -42,13 +58,16 @@ export class Input {
   touchAbilityHeld = false;
   /** When true, keyboard is left to DOM (riddle / hall of fame). */
   blocked = false;
+  private cheatBuf = "";
+  private cheatAt = 0;
+  private pendingCheat: CheatCode | null = null;
 
   attach(el: HTMLElement) {
     this.onKeyDown = this.onKeyDown.bind(this);
     this.onKeyUp = this.onKeyUp.bind(this);
     this.onBlur = this.onBlur.bind(this);
-    window.addEventListener("keydown", this.onKeyDown);
-    window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("keydown", this.onKeyDown, true);
+    window.addEventListener("keyup", this.onKeyUp, true);
     window.addEventListener("blur", this.onBlur);
     document.addEventListener("visibilitychange", this.onBlur);
     el.addEventListener("pointerdown", this.onPointerDown);
@@ -59,8 +78,8 @@ export class Input {
   }
 
   detach(el: HTMLElement) {
-    window.removeEventListener("keydown", this.onKeyDown);
-    window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("keydown", this.onKeyDown, true);
+    window.removeEventListener("keyup", this.onKeyUp, true);
     window.removeEventListener("blur", this.onBlur);
     document.removeEventListener("visibilitychange", this.onBlur);
     el.removeEventListener("pointerdown", this.onPointerDown);
@@ -91,6 +110,12 @@ export class Input {
       this.touchJump = this.touchJumpHeld = false;
       this.touchAbility = this.touchAbilityHeld = false;
     }
+  }
+
+  sampleCheat(): CheatCode | null {
+    const code = this.pendingCheat;
+    this.pendingCheat = null;
+    return code;
   }
 
   sample(): Actions {
@@ -131,6 +156,8 @@ export class Input {
   }
 
   private onKeyDown = (e: KeyboardEvent) => {
+    if (isTypingTarget(e.target)) return;
+    if (!e.repeat) this.feedCheat(e);
     if (this.blocked) return;
     if (GAME_KEYS.has(e.code)) e.preventDefault();
     this.keys.add(e.code);
@@ -154,4 +181,22 @@ export class Input {
       /* already released */
     }
   };
+
+  private feedCheat(e: KeyboardEvent) {
+    const letter = letterFromEvent(e);
+    if (!letter) return;
+    const now = performance.now();
+    if (now - this.cheatAt > CHEAT_GAP_MS) this.cheatBuf = "";
+    this.cheatBuf += letter;
+    this.cheatAt = now;
+    if (this.cheatBuf.length > 16) this.cheatBuf = this.cheatBuf.slice(-16);
+    for (const code of CHEAT_CODES) {
+      if (this.cheatBuf.endsWith(code)) {
+        this.pendingCheat = code;
+        this.cheatBuf = "";
+        e.preventDefault();
+        return;
+      }
+    }
+  }
 }

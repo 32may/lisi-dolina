@@ -34,7 +34,7 @@ export const FLY_ACCEL = 2400;
 export const FLY_MAX = 420;
 export const HARD_LAND = 520;
 export const MAIN_LEVELS = 9;
-
+export const NAME_MAX = 12;
 export const SAVE_KEY = "lisi-dolina-v3";
 
 export const SHEET = {

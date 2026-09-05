@@ -4,7 +4,7 @@
 
 - **GitHub:** https://github.com/32may/lisi-dolina
 - **Účet:** 32may
-- **Verze:** 2.0 — postavy za mince, schopnosti na mezerníku, tajné úrovně, May a Mia
+- **Verze:** 2.1 — postavy za mince, schopnosti na mezerníku, tajné úrovně, May a Mia
 
 ## Ovládání
 

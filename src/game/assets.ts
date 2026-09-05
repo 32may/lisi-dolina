@@ -31,6 +31,8 @@ export interface Assets {
   dart: HTMLImageElement;
   may: HTMLImageElement;
   mia: HTMLImageElement;
+  mayClap: HTMLImageElement;
+  miaClap: HTMLImageElement;
   curl: HTMLImageElement;
   characters: Record<CharacterId, CharacterSheets>;
   skies: Record<string, HTMLImageElement>;
@@ -57,8 +59,10 @@ const PATHS = {
   door: "/game/sprites/door.png",
   lever: "/game/sprites/lever.png",
   dart: "/game/sprites/dart.png",
-  may: "/game/sprites/may-idle.png",
-  mia: "/game/sprites/mia-idle.png",
+  may: "/game/sprites/may-idle.png?v=sit3",
+  mia: "/game/sprites/mia-idle.png?v=sit3",
+  mayClap: "/game/sprites/may-clap.png?v=sit3",
+  miaClap: "/game/sprites/mia-clap.png?v=sit3",
   curl: "/game/sprites/porcupine-curl.png",
 } as const;
 
