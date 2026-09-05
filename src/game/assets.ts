@@ -34,6 +34,10 @@ export interface Assets {
   mayClap: HTMLImageElement;
   miaClap: HTMLImageElement;
   curl: HTMLImageElement;
+  hallThrones: HTMLImageElement;
+  hallCeremony: HTMLImageElement;
+  introPlaque: HTMLImageElement;
+  shopStall: HTMLImageElement;
   characters: Record<CharacterId, CharacterSheets>;
   skies: Record<string, HTMLImageElement>;
 }
@@ -64,6 +68,10 @@ const PATHS = {
   mayClap: "/game/sprites/may-clap.png?v=sit3",
   miaClap: "/game/sprites/mia-clap.png?v=sit3",
   curl: "/game/sprites/porcupine-curl.png",
+  hallThrones: "/game/map/hall-thrones.jpg?v=cave6",
+  hallCeremony: "/game/map/hall-ceremony.jpg?v=cer1",
+  introPlaque: "/game/map/intro-plaque.jpg?v=plaque4",
+  shopStall: "/game/sprites/shop-stall.png?v=stall7",
 } as const;
 
 function loadImage(src: string): Promise<HTMLImageElement> {

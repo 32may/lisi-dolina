@@ -1,6 +1,6 @@
 import { loadAssets, type Assets } from "./assets";
 import { GameAudio } from "./audio";
-import { CHAR_BY_ID, isCharacterId, type CharacterDef, type CharacterId } from "./characters";
+import { CHAR_BY_ID, CHARACTERS, isCharacterId, type CharacterDef, type CharacterId } from "./characters";
 import { findLevel, HALL_LAYOUT, LEVEL_EXTRAS, THEME_KEYS, THEME_TINT } from "./content";
 import {
   APEX_GRAVITY,
@@ -29,7 +29,7 @@ import {
 } from "./constants";
 import { Input, type Actions } from "./input";
 import { LEVELS } from "./levels";
-import { formatLegend, HALL_LINES, layoutLegendSlots, runTotals } from "./legend";
+import { formatLegend, HALL_LINES, INTRO_LINE, layoutLegendSlots, runTotals } from "./legend";
 import { addLegend, listLegends } from "./legend.functions";
 import { coinId, SCORE } from "./progress";
 import { RIDDLE_BY_ID } from "./riddles";
@@ -184,6 +184,7 @@ export class Game {
   introLock = false;
   pendingFame: string | null = null;
   passedGuards = new Set<number>();
+  shopHits: { id: CharacterId; x: number; y: number; w: number; h: number }[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -191,6 +192,7 @@ export class Game {
     if (!ctx) throw new Error("Canvas 2D není dostupné");
     this.ctx = ctx;
     this.input.attach(canvas);
+    canvas.addEventListener("pointerdown", this.onShopPointer);
     this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.loadLevel(0, false);
     this.syncHud();
@@ -219,6 +221,7 @@ export class Game {
     this.running = false;
     cancelAnimationFrame(this.raf);
     this.input.detach(this.canvas);
+    this.canvas.removeEventListener("pointerdown", this.onShopPointer);
     window.removeEventListener("resize", this.resize);
     document.removeEventListener("visibilitychange", this.onVis);
     if (window.__controlsTest) delete window.__controlsTest;
@@ -1370,6 +1373,12 @@ export class Game {
       return;
     }
     const p = this.player;
+    if (this.level.hall && p.x + this.pw / 2 > HALL_LAYOUT.daisX - 280) {
+      this.camX += (HALL_LAYOUT.backdropX - this.camX) * (1 - Math.exp(-3.2 * dt));
+      this.camY += (0 - this.camY) * (1 - Math.exp(-4 * dt));
+      this.camX = Math.max(0, Math.min(this.level.width - VIEW_W, this.camX));
+      return;
+    }
     const targetLook = p.facing * 90 + p.vx * 0.18;
     this.lookX += (targetLook - this.lookX) * (1 - Math.exp(-4 * dt));
     const tx = p.x + this.pw / 2 + this.lookX - VIEW_W * 0.42;
@@ -1494,6 +1503,10 @@ export class Game {
       endCompletedGame: () => void;
       hallPhase: () => string;
       advanceHallTalk: () => void;
+      startTalk: () => void;
+      startGather: () => void;
+      openShop: () => void;
+      shopDemo: () => void;
       resetHallSign: () => void;
       hudSnap: () => Record<string, unknown>;
     };
@@ -1532,6 +1545,18 @@ export class Game {
     extra.endCompletedGame = () => this.endCompletedGame();
     extra.hallPhase = () => this.hallPhase;
     extra.advanceHallTalk = () => this.advanceHallTalk();
+    extra.startTalk = () => this.startTalk();
+    extra.startGather = () => this.startGather();
+    extra.openShop = () => {
+      this.setPlayOverlay("shop");
+      this.syncHud();
+    };
+    extra.shopDemo = () => {
+      useHud.getState().patch({ owned: ["fox"], purse: 40, character: "fox" });
+      this.applyCharacter("fox");
+      this.setPlayOverlay("shop");
+      this.syncHud();
+    };
     extra.resetHallSign = () => {
       useHud.getState().patch({ legendSigned: false });
       this.ceremonyTalked = false;
@@ -1576,6 +1601,10 @@ export class Game {
     const ctx = this.ctx;
     const a = this.assets;
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+    if (this.overlay === "intro") {
+      this.drawIntroScene();
+      return;
+    }
     const shake = this.reducedMotion ? 0 : this.trauma * this.trauma;
     const ox = (Math.random() * 2 - 1) * 12 * shake;
     const oy = (Math.random() * 2 - 1) * 10 * shake;
@@ -1585,6 +1614,8 @@ export class Game {
     ctx.translate(-Math.round(this.camX), -Math.round(this.camY));
     this.drawWorld(a);
     ctx.restore();
+    if (this.isHallCinematic()) this.drawHallCeremony(a);
+    if (this.overlay === "shop") this.drawShop(a);
   }
 
   private drawParallax() {
@@ -1671,13 +1702,17 @@ export class Game {
       }
     }
     this.drawGuards(a);
+    if (this.level.hall) this.drawHallBackdrop(a);
     this.drawExtras(a);
     if (!this.level.hall) {
       const f = this.level.flag;
       this.drawSheet(a?.flag, Math.floor(this.time * 6) % 4, f.x + 8, f.y - 8, 72, 96, 1, false);
     }
-    for (const c of this.companions) this.drawCompanion(a, c);
-    this.drawPlayer(a);
+    const hideHeroes = this.isHallCinematic();
+    if (!hideHeroes) {
+      for (const c of this.companions) this.drawCompanion(a, c);
+      this.drawPlayer(a);
+    }
     for (const q of this.particles) {
       ctx.globalAlpha = Math.max(0, q.life / q.max);
       ctx.fillStyle = q.color;
@@ -1843,28 +1878,26 @@ export class Game {
       ctx.lineWidth = 3;
       ctx.strokeRect(w.x, w.y, w.w, w.h);
     }
-    if (this.level.hall) this.drawHallSet();
-    for (const n of this.npcs) {
-      const clapping = this.npcClap > 0;
-      const img =
-        n.who === "may"
-          ? clapping
-            ? a?.mayClap ?? a?.may
-            : a?.may
-          : clapping
-            ? a?.miaClap ?? a?.mia
-            : a?.mia;
-      const sitting = Boolean(this.level.hall);
-      const h = sitting ? 200 : n.who === "may" ? 112 : 94;
-      const w = sitting ? (n.who === "may" ? 156 : 138) : n.who === "may" ? 92 : 72;
-      const bounce = clapping ? Math.abs(Math.sin(this.time * 18)) * 4 : 0;
-      const frame = clapping ? Math.floor(this.time * 8) % 4 : Math.floor(this.time * 4) % 4;
-      this.drawSheet(img, frame, n.x, n.y - bounce, w, h, 1, false);
-    }
-    if (this.level.hall) {
-      this.drawThroneFront(HALL_LAYOUT.mayX);
-      this.drawThroneFront(HALL_LAYOUT.miaX);
-      this.drawHallTalk();
+    if (this.level.hall && !this.isHallCinematic()) {
+      this.drawHallNames(false);
+      this.drawHallTalk(false);
+    } else if (!this.level.hall) {
+      for (const n of this.npcs) {
+        const clapping = this.npcClap > 0;
+        const img =
+          n.who === "may"
+            ? clapping
+              ? a?.mayClap ?? a?.may
+              : a?.may
+            : clapping
+              ? a?.miaClap ?? a?.mia
+              : a?.mia;
+        const h = n.who === "may" ? 112 : 94;
+        const w = n.who === "may" ? 92 : 72;
+        const bounce = clapping ? Math.abs(Math.sin(this.time * 18)) * 4 : 0;
+        const frame = clapping ? Math.floor(this.time * 8) % 4 : Math.floor(this.time * 4) % 4;
+        this.drawSheet(img, frame, n.x, n.y - bounce, w, h, 1, false);
+      }
     }
   }
 
@@ -2041,21 +2074,23 @@ export class Game {
     this.ceremonyLock = true;
     this.npcClap = 0;
     const hud = useHud.getState();
-    const ids = hud.owned;
-    const n = Math.max(1, ids.length);
-    const slots = ids.map((id, i) => {
+    const order = CHARACTERS.map((c) => c.id).filter((id) => hud.owned.includes(id));
+    const n = Math.max(1, order.length);
+    const span = Math.min(560, 110 * Math.max(1, n - 1));
+    const left = HALL_LAYOUT.cx - span / 2;
+    const slots = order.map((id, i) => {
       const t = n === 1 ? 0.5 : i / (n - 1);
-      const ang = Math.PI * (0.18 + 0.64 * t);
       return {
         id,
-        x: HALL_LAYOUT.cx - Math.cos(ang) * 210,
-        y: 598 - Math.sin(ang) * 36,
+        x: left + t * span,
+        y: HALL_LAYOUT.audienceY,
       };
     });
     const current = hud.character;
     const playerSlot = slots.find((s) => s.id === current) ?? slots[Math.floor(n / 2)];
     this.player.vx = 0;
     this.player.vy = 0;
+    this.player.facing = 1;
     this.playerTarget = playerSlot;
     const prev = new Map(this.companions.map((c) => [c.id, c]));
     this.companions = slots
@@ -2128,30 +2163,35 @@ export class Game {
     return 3.8;
   }
 
-  private drawHallSet() {
+  private isHallCinematic() {
+    return (
+      this.level.hall &&
+      (this.hallPhase === "gather" || this.hallPhase === "talk" || this.hallPhase === "write")
+    );
+  }
+
+  private drawHallBackdrop(a: Assets | null) {
+    const img = a?.hallThrones;
+    if (!img) return;
+    this.ctx.drawImage(img, HALL_LAYOUT.backdropX, 0, VIEW_W, VIEW_H);
+  }
+
+  private drawHallCeremony(a: Assets | null) {
+    const ctx = this.ctx;
+    const img = a?.hallCeremony ?? a?.hallThrones;
+    if (img) ctx.drawImage(img, 0, 0, VIEW_W, VIEW_H);
+    else {
+      ctx.fillStyle = "#1a1410";
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    }
+    this.drawHallNames(true);
+    this.drawHallTalk(true);
+  }
+
+  private drawHallNames(screen: boolean) {
     const ctx = this.ctx;
     const hud = useHud.getState();
-    const px = HALL_LAYOUT.plaqueX;
-    const pw = HALL_LAYOUT.plaqueW;
-    const cx = HALL_LAYOUT.cx;
-    ctx.save();
-    ctx.fillStyle = "#3a3228";
-    ctx.fillRect(px, 4, pw, 248);
-    ctx.strokeStyle = "#8a7358";
-    ctx.lineWidth = 7;
-    ctx.strokeRect(px, 4, pw, 248);
-    ctx.strokeStyle = "#c4a060";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(px + 12, 16, pw - 24, 224);
-    ctx.fillStyle = "#4a4034";
-    ctx.fillRect(px + 24, 56, pw - 48, 176);
-    this.drawStonePedestal();
-    this.drawThroneBack(HALL_LAYOUT.mayX, "May");
-    this.drawThroneBack(HALL_LAYOUT.miaX, "Mia");
-    ctx.fillStyle = "#efe8dc";
-    ctx.font = "600 26px Fraunces, serif";
-    ctx.textAlign = "center";
-    ctx.fillText("Deska legend", cx, 46);
+    const px = screen ? 250 : HALL_LAYOUT.backdropX + 250;
     const entries = hud.legends.length
       ? hud.legends
       : hud.fame.map((name, i) => ({
@@ -2162,155 +2202,49 @@ export class Game {
           createdAt: "",
           cheater: false,
         }));
+    if (!entries.length) return;
     const placed = layoutLegendSlots(entries, 12);
     entries.forEach((e, i) => {
       const { slot, layer } = placed[i] ?? { slot: i % 12, layer: 0 };
       const col = slot % 3;
       const row = Math.floor(slot / 3);
-      const baseX = px + 48 + col * 214 + layer * 12;
-      const baseY = 86 + row * 42 + layer * 8;
+      const baseX = px + col * 260 + layer * 10;
+      const baseY = 28 + row * 26 + layer * 6;
       const dir = slot % 2 === 0 ? 1 : -1;
       const fresh = i === entries.length - 1 || e.name === this.lastSignedName;
-      const angle = fresh ? 0.03 * dir : (0.16 + layer * 0.14) * dir * (layer % 2 === 0 ? 1 : 0.7);
       ctx.save();
       ctx.translate(baseX, baseY);
-      ctx.rotate(angle);
+      ctx.rotate((fresh ? 0.02 : 0.12 + layer * 0.1) * dir);
       ctx.textAlign = "left";
-      ctx.font = fresh ? "800 22px Fraunces, serif" : "700 17px Fraunces, serif";
-      const label = formatLegend(e);
-      ctx.fillStyle = e.cheater ? (fresh ? "#e8b080" : "rgba(90, 40, 28, 0.88)") : fresh ? "#f0d48a" : "rgba(18, 12, 8, 0.82)";
-      ctx.fillText(label, 0, 0);
-      ctx.fillStyle = e.cheater ? "rgba(80, 30, 20, 0.55)" : fresh ? "rgba(60, 36, 12, 0.7)" : "rgba(232, 214, 180, 0.28)";
-      ctx.fillText(label, 1, -1);
+      ctx.font = fresh ? "800 17px Fraunces, serif" : "700 13px Fraunces, serif";
+      ctx.fillStyle = e.cheater
+        ? fresh
+          ? "#e8b080"
+          : "rgba(90, 40, 28, 0.88)"
+        : fresh
+          ? "#f0d48a"
+          : "rgba(32, 22, 14, 0.82)";
+      ctx.fillText(formatLegend(e), 0, 0);
       ctx.restore();
     });
-    ctx.restore();
-    if (this.overlay === "intro") this.drawIntroFox();
   }
 
-  private drawStonePedestal() {
-    const ctx = this.ctx;
-    const x = HALL_LAYOUT.daisX + 76;
-    ctx.save();
-    ctx.fillStyle = "#4a4034";
-    ctx.fillRect(x, 508, 488, 40);
-    ctx.fillStyle = "#5a4e40";
-    ctx.fillRect(x + 20, 492, 448, 22);
-    ctx.strokeStyle = "#2e2820";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, 508, 488, 40);
-    ctx.strokeRect(x + 20, 492, 448, 22);
-    ctx.fillStyle = "rgba(210, 190, 160, 0.18)";
-    ctx.fillRect(x + 24, 494, 440, 5);
-    ctx.restore();
-  }
-
-  private throneGeom(x: number) {
-    const seatY = 424;
-    const backW = 128;
-    const backH = 158;
-    const holeW = 58;
-    const holeH = 78;
-    return {
-      x,
-      seatY,
-      backW,
-      backH,
-      backTop: seatY - backH,
-      holeW,
-      holeH,
-      holeX: x - holeW / 2,
-      holeY: seatY - backH + 46,
-      seatW: 138,
-      seatH: 26,
-      armW: 22,
-    };
-  }
-
-  private drawCarvedName(x: number, y: number, label: string) {
-    const ctx = this.ctx;
-    ctx.font = "700 28px Fraunces, serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#2a2418";
-    ctx.fillText(label, x + 2, y + 3);
-    ctx.fillStyle = "#5a4c38";
-    ctx.fillText(label, x + 1, y + 1);
-    ctx.fillStyle = "#cbb99a";
-    ctx.fillText(label, x - 1.5, y - 1.5);
-    ctx.fillStyle = "#8a7a60";
-    ctx.fillText(label, x, y);
-  }
-
-  private drawThroneBack(x: number, label: string) {
-    const ctx = this.ctx;
-    const g = this.throneGeom(x);
-    ctx.save();
-    ctx.fillStyle = "#6a5a44";
-    ctx.strokeStyle = "#3a3228";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    this.addRoundRect(x - g.backW / 2, g.backTop, g.backW, g.backH + 10, 12);
-    this.addRoundRect(g.holeX, g.holeY, g.holeW, g.holeH, 16);
-    ctx.fill("evenodd");
-    ctx.beginPath();
-    this.addRoundRect(x - g.backW / 2, g.backTop, g.backW, g.backH + 10, 12);
-    this.addRoundRect(g.holeX, g.holeY, g.holeW, g.holeH, 16);
-    ctx.stroke();
-    ctx.fillStyle = "rgba(210, 190, 160, 0.22)";
-    ctx.fillRect(x - g.backW / 2 + 8, g.backTop + 6, g.backW - 16, 8);
-    this.drawCarvedName(x, g.backTop + 22, label);
-    ctx.fillStyle = "#4a3e30";
-    ctx.fillRect(x - 36, g.seatY + 18, 72, 56);
-    ctx.restore();
-  }
-
-  private drawThroneFront(x: number) {
-    const ctx = this.ctx;
-    const g = this.throneGeom(x);
-    ctx.save();
-    ctx.fillStyle = "#5c4c38";
-    ctx.strokeStyle = "#3a3228";
-    ctx.lineWidth = 2;
-    this.roundRect(x - g.armW - g.seatW / 2 + 10, g.seatY - 40, g.armW, 52, 6);
-    ctx.fill();
-    ctx.stroke();
-    this.roundRect(x + g.seatW / 2 - 10, g.seatY - 40, g.armW, 52, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#6a5844";
-    this.roundRect(x - g.seatW / 2, g.seatY - 6, g.seatW, g.seatH, 7);
-    ctx.fill();
-    ctx.strokeStyle = "#3a3228";
-    ctx.stroke();
-    ctx.fillStyle = "rgba(210, 190, 160, 0.28)";
-    ctx.fillRect(x - g.seatW / 2 + 8, g.seatY - 4, g.seatW - 16, 5);
-    ctx.fillStyle = "#3e3226";
-    ctx.fillRect(x - g.seatW / 2 + 10, g.seatY + 16, g.seatW - 20, 10);
-    ctx.restore();
-  }
-
-  private drawHallTalk() {
+  private drawHallTalk(screen: boolean) {
     if (this.hallPhase !== "talk") return;
     const line = HALL_LINES[this.talkIndex];
     if (!line) return;
+    const mayX = screen ? VIEW_W * 0.42 : HALL_LAYOUT.mayX;
+    const miaX = screen ? VIEW_W * 0.58 : HALL_LAYOUT.miaX;
+    const mayY = screen ? 258 : 368;
+    const miaY = screen ? 272 : 378;
+    const bothY = screen ? 168 : 248;
     if (line.who === "both") {
-      const may = this.npcs.find((q) => q.who === "may");
-      const mia = this.npcs.find((q) => q.who === "mia");
-      this.drawBothBubble(
-        HALL_LAYOUT.cx,
-        248,
-        line.text,
-        may?.x ?? HALL_LAYOUT.mayX,
-        (may?.y ?? 518) - 150,
-        mia?.x ?? HALL_LAYOUT.miaX,
-        (mia?.y ?? 518) - 140,
-      );
+      this.drawBothBubble(screen ? VIEW_W / 2 : HALL_LAYOUT.cx, bothY, line.text, mayX, mayY, miaX, miaY);
       return;
     }
-    const n = this.npcs.find((q) => q.who === line.who);
-    if (!n) return;
-    this.drawBubble(n.x, n.y - 168, line.text, false);
+    const x = line.who === "mia" ? miaX : mayX;
+    const y = line.who === "mia" ? miaY : mayY;
+    this.drawBubble(x, y, line.text, false);
   }
 
   private layoutBubble(text: string, maxW: number) {
@@ -2404,11 +2338,140 @@ export class Game {
     ctx.closePath();
   }
 
-  private drawIntroFox() {
+  private drawIntroScene() {
+    const ctx = this.ctx;
     const a = this.assets;
-    const img = a?.characters.fox?.idle ?? a?.idle;
-    if (!img) return;
-    this.drawSheet(img, Math.floor(this.time * 4) % 4, HALL_LAYOUT.foxX, 600, 120, 136, 1, false);
-    this.drawBubble(HALL_LAYOUT.foxX, 430, "Zvládneš se zapsat mezi legendy této hry?", true);
+    if (a?.introPlaque) ctx.drawImage(a.introPlaque, 0, 0, VIEW_W, VIEW_H);
+    else {
+      ctx.fillStyle = "#1a1420";
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    }
+    this.drawIntroNames();
+    const fox = a?.characters.fox?.idle ?? a?.idle;
+    const foxX = VIEW_W / 2;
+    const foxY = 534;
+    if (fox) this.drawSheet(fox, Math.floor(this.time * 4) % 4, foxX, foxY, 120, 132, 1, false);
+    this.drawBubble(foxX, foxY - 136, INTRO_LINE, true);
+  }
+
+  private drawIntroNames() {
+    const ctx = this.ctx;
+    const hud = useHud.getState();
+    const entries = hud.legends.length
+      ? hud.legends
+      : hud.fame.map((name, i) => ({
+          id: i,
+          name,
+          score: 0,
+          coins: 0,
+          createdAt: "",
+          cheater: false,
+        }));
+    if (!entries.length) return;
+    const placed = layoutLegendSlots(entries, 12);
+    entries.forEach((e, i) => {
+      const { slot, layer } = placed[i] ?? { slot: i % 12, layer: 0 };
+      const col = slot % 3;
+      const row = Math.floor(slot / 3);
+      const baseX = 430 + col * 148 + layer * 8;
+      const baseY = 148 + row * 36 + layer * 6;
+      const dir = slot % 2 === 0 ? 1 : -1;
+      const fresh = i === entries.length - 1 || e.name === this.lastSignedName;
+      ctx.save();
+      ctx.translate(baseX, baseY);
+      ctx.rotate(0.1 * dir * (layer % 2 === 0 ? 1 : 0.6));
+      ctx.textAlign = "left";
+      ctx.font = fresh ? "800 18px Fraunces, serif" : "700 14px Fraunces, serif";
+      ctx.fillStyle = e.cheater ? "rgba(90,40,28,0.9)" : fresh ? "#5a3a18" : "rgba(42,28,16,0.82)";
+      ctx.fillText(formatLegend(e), 0, 0);
+      ctx.restore();
+    });
+  }
+
+  shopClick(viewX: number, viewY: number) {
+    if (this.overlay !== "shop") return;
+    const hit = this.shopHits.find(
+      (s) => viewX >= s.x && viewX <= s.x + s.w && viewY >= s.y && viewY <= s.y + s.h,
+    );
+    if (!hit) return;
+    const hud = useHud.getState();
+    const def = CHAR_BY_ID[hit.id];
+    if (!def || def.price <= 0 || hud.owned.includes(hit.id)) return;
+    if (hud.purse < def.price) {
+      hud.patch({ banner: "Málo mincí", bannerUntil: Date.now() + 2500 });
+      return;
+    }
+    if (hud.buyCharacter(hit.id)) {
+      hud.setCharacter(hit.id);
+      this.applyCharacter(hit.id);
+      this.audio.key();
+    }
+  }
+
+  private onShopPointer = (e: PointerEvent) => {
+    if (this.overlay !== "shop") return;
+    const r = this.canvas.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return;
+    const x = ((e.clientX - r.left) / r.width) * VIEW_W;
+    const y = ((e.clientY - r.top) / r.height) * VIEW_H;
+    this.shopClick(x, y);
+  };
+
+  private drawShop(a: Assets | null) {
+    const ctx = this.ctx;
+    const stall = a?.shopStall;
+    this.shopHits = [];
+    const hud = useHud.getState();
+    ctx.fillStyle = "rgba(10, 8, 12, 0.42)";
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    if (stall) {
+      const maxW = VIEW_W - 24;
+      const maxH = VIEW_H - 108;
+      const scale = Math.min(maxW / stall.width, maxH / stall.height);
+      const w = stall.width * scale;
+      const h = stall.height * scale;
+      const x = (VIEW_W - w) / 2;
+      const y = 6;
+      ctx.drawImage(stall, x, y, w, h);
+      const goods = CHARACTERS.filter((c) => c.price > 0 && !hud.owned.includes(c.id));
+      const cy = y + h * 0.72;
+      const left = x + w * 0.2;
+      const span = w * 0.6;
+      goods.forEach((c, i) => {
+        const t = goods.length === 1 ? 0.5 : (i + 0.5) / goods.length;
+        const ix = left + t * span;
+        const ch = a?.characters[c.id];
+        const img = ch?.idle;
+        const can = hud.purse >= c.price;
+        const dw = c.id === "capybara" ? 118 : 104;
+        const dh = c.id === "capybara" ? 96 : 110;
+        ctx.save();
+        if (!can) ctx.globalAlpha = 0.45;
+        if (img) this.drawSheet(img, Math.floor(this.time * 4) % 4, ix, cy, dw, dh, 1, false);
+        ctx.fillStyle = "rgba(28, 16, 8, 0.72)";
+        ctx.fillRect(ix - 52, cy + 6, 104, 40);
+        ctx.fillStyle = can ? "#f7edd8" : "#8a7a68";
+        ctx.font = "700 14px Outfit, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(c.name, ix, cy + 22);
+        ctx.font = "600 13px Outfit, sans-serif";
+        ctx.fillText(`${c.price} mincí`, ix, cy + 40);
+        ctx.restore();
+        this.shopHits.push({ id: c.id, x: ix - 58, y: cy - 120, w: 116, h: 170 });
+      });
+    }
+    ctx.save();
+    ctx.fillStyle = "rgba(24, 14, 8, 0.82)";
+    this.roundRect(16, 14, 168, 36, 10);
+    ctx.fill();
+    ctx.strokeStyle = "#c4a060";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#efe8dc";
+    ctx.font = "600 16px Outfit, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`Měšec  ${hud.purse}`, 32, 32);
+    ctx.restore();
   }
 }

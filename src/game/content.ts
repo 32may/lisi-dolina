@@ -29,14 +29,16 @@ export const THEME_TINT: Record<string, string> = {
 export const HALL_LAYOUT = {
   width: 3600,
   cx: 3000,
-  mayX: 2884,
-  miaX: 3116,
+  mayX: 2848,
+  miaX: 3154,
   plaqueX: 2636,
   plaqueW: 728,
   plaqueY: 4,
   daisX: 2680,
   introCamX: 2360,
+  backdropX: 2360,
   foxX: 2760,
+  audienceY: 598,
 };
 
 function solid(x: number, y: number, w: number, h: number): Platform {

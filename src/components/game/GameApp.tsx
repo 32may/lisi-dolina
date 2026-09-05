@@ -325,21 +325,16 @@ export function GameApp() {
       )}
 
       {hud.overlay === "shop" && (
-        <ShopStall
+        <ShopRoad
           owned={ownedSet}
-          active={hud.character}
           purse={hud.purse}
-          coins={hud.coins}
-          total={hud.total}
-          title={title}
           onPick={(id) => {
             const def = CHARACTERS.find((c) => c.id === id);
-            if (!def) return;
-            if (ownedSet.has(id)) {
+            if (!def || def.price <= 0) return;
+            if (ownedSet.has(id)) return;
+            if (useHud.getState().buyCharacter(id)) {
               useHud.getState().setCharacter(id);
-              return;
             }
-            useHud.getState().buyCharacter(id);
           }}
           onLeave={() => game()?.leaveShop()}
           onMenu={() => game()?.goMenu("title")}
@@ -620,38 +615,37 @@ function HeroGrid({
   );
 }
 
-function ShopStall({
+function ShopRoad({
   owned,
-  active,
   purse,
-  coins,
-  total,
-  title,
   onPick,
   onLeave,
   onMenu,
   nextLabel,
 }: {
   owned: Set<string>;
-  active: CharacterId;
   purse: number;
-  coins: number;
-  total: number;
-  title: string;
   onPick: (id: CharacterId) => void;
   onLeave: () => void;
   onMenu: () => void;
   nextLabel: string;
 }) {
+  const goods = CHARACTERS.filter((c) => c.price > 0 && !owned.has(c.id));
   const skip = (i: number) => {
-    const c = CHARACTERS[i];
+    const c = goods[i];
     if (!c) return true;
-    return !owned.has(c.id) && purse < c.price && c.price > 0;
+    return purse < c.price;
   };
-  const focus = useGridKeys(true, CHARACTERS.length, 5, (i) => {
-    const c = CHARACTERS[i];
-    if (c) onPick(c.id);
-  }, skip);
+  useGridKeys(
+    true,
+    Math.max(1, goods.length),
+    Math.max(1, goods.length),
+    (i) => {
+      const c = goods[i];
+      if (c) onPick(c.id);
+    },
+    skip,
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -666,39 +660,15 @@ function ShopStall({
   }, [onMenu]);
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-[#1a1008]/55" />
-      <section
-        className="relative w-full max-w-3xl overflow-hidden rounded-[8px] border-[10px] px-5 py-6 text-center shadow-[0_28px_70px_rgba(0,0,0,0.5)]"
-        style={{
-          borderColor: "#6a4a28",
-          background:
-            "linear-gradient(#3a2a1c, #2a1c12 40%, #241810), repeating-linear-gradient(90deg, rgba(90,60,32,0.35) 0 12px, rgba(50,34,18,0.2) 12px 24px)",
-        }}
-      >
-        <div className="pointer-events-none absolute inset-x-10 top-0 h-4 rounded-b-full bg-[#8a6238] shadow-inner" />
-        <div className="pointer-events-none absolute inset-x-6 top-8 h-3 rounded-full bg-[#5a3c22]/80" />
-        <p className="mt-4 text-sm font-medium uppercase tracking-[0.18em] text-[#e0c070]">Po vlajce · dřevěný stánek</p>
-        <h2 className="font-display text-3xl text-[#efe8dc]">Obchod v dolině</h2>
-        <p className="mt-1 flex items-center justify-center gap-2 text-[#c4b49a]">
-          <img src="/game/sprites/coin-hud.png" alt="" className="size-6 object-contain" />
-          {title} · mince {coins}/{total} · měšec {purse}
-        </p>
-        <div className="mx-auto mt-4 rounded-[12px] border border-[#8a6238] bg-[#1a120c]/50 p-3">
-          <HeroGrid owned={owned} active={active} shop purse={purse} onPick={onPick} focus={focus} />
-        </div>
-        <div className="relative mx-auto mt-4 h-8 max-w-xl rounded-sm bg-[#6a4a28] shadow-[inset_0_2px_0_#c4a060]">
-          <div className="absolute inset-x-8 top-1 h-2 rounded-full bg-[#8a6238]" />
-        </div>
-        <div className="mt-5 flex w-full max-w-sm mx-auto flex-col gap-3">
-          <Button size="lg" onClick={onLeave}>
-            {nextLabel}
-          </Button>
-          <Button variant="ghost" onClick={onMenu}>
-            Menu
-          </Button>
-        </div>
-      </section>
+    <div className="pointer-events-none absolute inset-0">
+      <div className="pointer-events-auto absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <Button size="lg" onClick={onLeave}>
+          {nextLabel}
+        </Button>
+        <Button variant="ghost" onClick={onMenu}>
+          Menu
+        </Button>
+      </div>
     </div>
   );
 }
